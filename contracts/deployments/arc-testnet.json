@@ -1,0 +1,10 @@
+{
+  "chainId": 5042002,
+  "network": "arc-testnet",
+  "deployedAt": "2026-07-15",
+  "contracts": {
+    "AgentRegistry": "0x3A1F744d7F5B1F6E462727A8897CC88E273F730a",
+    "ConversionRegistry": "0xbdb4e36DFb61A446Ec6900351b1A47754e389432",
+    "CampaignEscrow": "0x194aCFf27b8fbe332dab5ffba8d5318708d74520"
+  }
+}
