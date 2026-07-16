@@ -1,0 +1,14 @@
+{
+  "name": "proof-of-conversion",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared"
+  ],
+  "scripts": {
+    "test": "node --test shared/src/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@proof-of-conversion/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "viem": "^2.55.2"
+  }
+}
