@@ -1,5 +1,9 @@
 # ConvertRail
 
+<p align="center">
+  <img src="assets/convertrail.png" alt="ConvertRail" width="480">
+</p>
+
 A neutral settlement rail for performance marketing, built on [Arc](https://www.arc.io/). Every conversion claim is checked by deterministic rules, fraud is refused on-chain in real time, and verified conversions are paid to publishers instantly in USDC — full amount, per conversion, no payout thresholds. From net-30 to one second.
 
 ## The problem
