@@ -16,7 +16,7 @@ import {
   REJECT_REASON,
   walletClient,
   type SignedConversionEvent,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 import { decide } from "./core.ts";
 
 const config = loadDemoConfig();

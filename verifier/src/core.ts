@@ -8,7 +8,7 @@ import {
   type SignedConversionEvent,
   type VerificationPolicy,
   type RejectReasonName,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 
 export interface ClaimInput {
   campaignId: Hex;

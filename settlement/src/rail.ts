@@ -6,7 +6,7 @@ import type { Address, Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { BatchEvmScheme } from "@circle-fin/x402-batching/client";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
-import type { ChainEnv } from "@proof-of-conversion/shared";
+import type { ChainEnv } from "@convertrail/shared";
 
 export interface PaymentResult {
   ref: string; // Gateway settlement reference (UUID, not a chain tx hash)
@@ -50,7 +50,7 @@ export class NanopaymentsRail implements SettlementRail {
     // verify API requires both, so the direct path enriches manually.
     const payload = {
       ...base,
-      resource: { url: `app://proof-of-conversion/${memo}`, description: memo, mimeType: "application/json" },
+      resource: { url: `app://convertrail/${memo}`, description: memo, mimeType: "application/json" },
       accepted: requirements,
     };
 

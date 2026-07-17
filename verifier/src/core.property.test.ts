@@ -10,7 +10,7 @@ import {
   nullifier,
   type SignedConversionEvent,
   type VerificationPolicy,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 import { decide, type ClaimInput } from "./core.ts";
 
 function mulberry32(seed: number): () => number {

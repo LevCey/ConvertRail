@@ -13,7 +13,7 @@ import {
   loadWallets,
   publicClient,
   walletClient,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 import { NanopaymentsRail } from "./rail.ts";
 
 const config = loadDemoConfig();

@@ -12,7 +12,7 @@ import {
   loadDemoConfig,
   loadWallets,
   publicClient,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 
 const TARGET_SETTLED = Number(process.env.E2E_TARGET_SETTLED ?? 20);
 const DEADLINE_MS = Number(process.env.E2E_DEADLINE_MS ?? 15 * 60_000);

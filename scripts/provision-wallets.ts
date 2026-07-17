@@ -11,7 +11,7 @@ import {
   publicClient,
   walletClient,
   ROLE,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 
 const WALLET_NAMES = ["advertiser", "operational", "verifier", "merchant", "pub-a", "pub-b", "pub-x"] as const;
 type WalletName = (typeof WALLET_NAMES)[number];

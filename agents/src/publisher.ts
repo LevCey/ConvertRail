@@ -12,7 +12,7 @@ import {
   publicClient,
   walletClient,
   type SignedConversionEvent,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 
 const publisherId = process.argv[2];
 if (!publisherId) {

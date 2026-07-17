@@ -14,7 +14,7 @@ import {
   publicClient,
   publisherBinding,
   walletClient,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 import { evaluate, pickTarget, type Outcome } from "./policy.ts";
 
 const config = loadDemoConfig();

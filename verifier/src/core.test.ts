@@ -6,7 +6,7 @@ import {
   nullifier,
   type SignedConversionEvent,
   type VerificationPolicy,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 import { decide, type ClaimInput } from "./core.ts";
 
 const CAMPAIGN = `0x${"11".repeat(32)}` as const;

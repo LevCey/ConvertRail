@@ -18,7 +18,7 @@ import {
   publicClient,
   walletClient,
   type SignedConversionEvent,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 
 const config = loadDemoConfig();
 const wallets = loadWallets();

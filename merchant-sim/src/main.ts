@@ -10,7 +10,7 @@ import {
   loadDemoConfig,
   loadWallets,
   type SignedConversionEvent,
-} from "@proof-of-conversion/shared";
+} from "@convertrail/shared";
 
 const config = loadDemoConfig();
 const wallets = loadWallets();
