@@ -2,6 +2,12 @@ export { canonicalJSON } from "./canonical.ts";
 export { nullifier, evidenceHash } from "./hashing.ts";
 export type { SignedConversionEvent } from "./types.ts";
 export {
+  reconstructFraudLog,
+  type FraudLogEntry,
+  type SubmittedEventArgs,
+  type RejectedEventArgs,
+} from "./fraudlog.ts";
+export {
   agentRegistryAbi,
   conversionRegistryAbi,
   campaignEscrowAbi,

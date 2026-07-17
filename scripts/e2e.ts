@@ -3,6 +3,7 @@
 // (non-zero exit, named check) if any target is missed within the deadline.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import type { Address } from "viem";
 import {
   campaignEscrowAbi,
   campaignIdFromName,
@@ -128,6 +129,71 @@ async function collect(): Promise<Summary> {
   };
 }
 
+// R7 acceptance (2.8): after the run, escrow accounting must equal the sum of
+// recognized payouts. Reconciles three independent views — the escrow's own
+// recognizedTotal, the sum of PayoutRecognized events, and the settlement
+// module's payment log — plus each publisher's allocation.recognized against
+// its share of the events. Any divergence is a hard failure.
+async function reconcile(): Promise<string[]> {
+  const errs: string[] = [];
+  const current = await pub.getBlockNumber();
+
+  const recognizedLogs = (
+    await pub.getContractEvents({
+      address: env.campaignEscrow,
+      abi: campaignEscrowAbi,
+      eventName: "PayoutRecognized",
+      fromBlock: startBlock,
+      toBlock: current,
+    })
+  ).filter((l) => (l.args as { campaignId: `0x${string}` }).campaignId === campaignId);
+
+  const recognizedFromEvents = recognizedLogs.reduce(
+    (sum, l) => sum + (l.args as { amount: bigint }).amount,
+    0n,
+  );
+
+  const campaign = await pub.readContract({
+    address: env.campaignEscrow,
+    abi: campaignEscrowAbi,
+    functionName: "getCampaign",
+    args: [campaignId],
+  });
+  if (campaign.recognizedTotal !== recognizedFromEvents) {
+    errs.push(`escrow recognizedTotal ${campaign.recognizedTotal} != sum(PayoutRecognized) ${recognizedFromEvents}`);
+  }
+
+  const paidTotal = existsSync(".e2e/payments.jsonl")
+    ? readFileSync(".e2e/payments.jsonl", "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .reduce((sum, line) => sum + BigInt((JSON.parse(line) as { amount: string }).amount), 0n)
+    : 0n;
+  if (paidTotal !== recognizedFromEvents) {
+    errs.push(`sum(payments) ${paidTotal} != escrow recognized ${recognizedFromEvents}`);
+  }
+
+  const perPublisher = new Map<string, bigint>();
+  for (const l of recognizedLogs) {
+    const a = l.args as { publisher: string; amount: bigint };
+    const key = a.publisher.toLowerCase();
+    perPublisher.set(key, (perPublisher.get(key) ?? 0n) + a.amount);
+  }
+  for (const [publisher, recognized] of perPublisher) {
+    const alloc = await pub.readContract({
+      address: env.campaignEscrow,
+      abi: campaignEscrowAbi,
+      functionName: "getAllocation",
+      args: [campaignId, publisher as Address],
+    });
+    if (alloc.recognized !== recognized) {
+      errs.push(`allocation.recognized ${alloc.recognized} != sum(PayoutRecognized[${publisher.slice(0, 10)}]) ${recognized}`);
+    }
+  }
+  return errs;
+}
+
 const started = Date.now();
 let summary: Summary = { settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0, duplicateReverts: 0, payments: 0 };
 
@@ -160,6 +226,7 @@ if (summary.rejected < 1) failures.push("no rejected claim");
 if (summary.duplicateReverts < 1) failures.push("no on-chain duplicate revert");
 if (summary.reallocations < 1) failures.push("no autonomous reallocation");
 if (summary.fraudSettled > 0) failures.push(`fraud publisher got ${summary.fraudSettled} settlements`);
+failures.push(...(await reconcile()));
 
 console.log("\n[e2e] final:", JSON.stringify(summary));
 if (failures.length > 0) {
