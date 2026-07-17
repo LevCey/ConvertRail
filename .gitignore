@@ -5,6 +5,10 @@ node_modules/
 .env
 .env.*
 !.env.example
+.wallets.json
+
+# runtime logs
+.e2e/
 
 # build output
 dist/

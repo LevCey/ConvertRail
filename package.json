@@ -6,7 +6,17 @@
     "shared"
   ],
   "scripts": {
-    "test": "node --test shared/src/*.test.ts"
+    "test": "node --test shared/src/*.test.ts verifier/src/*.test.ts agents/src/*.test.ts",
+    "provision": "node --env-file=.env scripts/provision-wallets.ts",
+    "merchant-sim": "node --env-file=.env merchant-sim/src/main.ts",
+    "verifier": "node --env-file=.env verifier/src/main.ts",
+    "settlement": "node --env-file=.env settlement/src/main.ts",
+    "advertiser": "node --env-file=.env agents/src/advertiser.ts",
+    "e2e": "node --env-file=.env scripts/e2e.ts"
+  },
+  "dependencies": {
+    "@circle-fin/x402-batching": "^3.2.0",
+    "viem": "^2.55.2"
   },
   "engines": {
     "node": ">=24"

@@ -1,0 +1,38 @@
+{
+  "campaign": {
+    "name": "poc-demo-1",
+    "pricePerConversion": "100000",
+    "budget": "10000000",
+    "disputeWindowBlocks": 8,
+    "gasProvisionEther": "0.003",
+    "caps": {
+      "pub-a": "5000000",
+      "pub-b": "3000000",
+      "pub-x": "2000000"
+    }
+  },
+  "publishers": [
+    { "id": "pub-a", "eventIntervalMs": 2500 },
+    { "id": "pub-b", "eventIntervalMs": 4000 }
+  ],
+  "fraud": {
+    "id": "pub-x",
+    "attackIntervalMs": 5000
+  },
+  "verification": {
+    "minClickToConversionMs": 1500,
+    "maxClaimsPerWindow": 30,
+    "rateWindowMs": 60000
+  },
+  "reallocation": {
+    "windowSize": 8,
+    "rejectRateThreshold": 0.4,
+    "minSamples": 4,
+    "shiftFraction": 0.5
+  },
+  "merchantSim": {
+    "port": 4600,
+    "seed": 424242,
+    "clickJitterMaxMs": 4000
+  }
+}
