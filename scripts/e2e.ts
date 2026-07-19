@@ -73,7 +73,7 @@ await waitFor("campaign on-chain", async () => {
 }, 120_000);
 
 run("verifier", ["verifier/src/main.ts"]);
-run("settlement", ["settlement/src/main.ts"]);
+const settlement = run("settlement", ["settlement/src/main.ts"]);
 run("pub-a", ["agents/src/publisher.ts", "pub-a"]);
 run("pub-b", ["agents/src/publisher.ts", "pub-b"]);
 run("fraud", ["agents/src/fraud.ts"]);
@@ -88,26 +88,47 @@ interface Summary {
   payments: number;
 }
 
+// Incremental, rate-limit-resilient collection: only the un-scanned block
+// tail is queried each cycle, and the cursor advances only after a fully
+// successful scan — so a throttled cycle drops nothing, it just retries the
+// same (small) range next time. Counts are cumulative accumulators.
+const acc = { settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0 };
+let collectedThrough = startBlock - 1n;
+
 async function collect(): Promise<Summary> {
   const current = await pub.getBlockNumber();
-  const [settledLogs, rejectedLogs, disputedLogs, reallocLogs] = await Promise.all([
-    pub.getContractEvents({
-      address: env.conversionRegistry, abi: conversionRegistryAbi, eventName: "ClaimSettled",
-      fromBlock: startBlock, toBlock: current,
-    }),
-    pub.getContractEvents({
-      address: env.conversionRegistry, abi: conversionRegistryAbi, eventName: "ClaimRejected",
-      fromBlock: startBlock, toBlock: current,
-    }),
-    pub.getContractEvents({
-      address: env.conversionRegistry, abi: conversionRegistryAbi, eventName: "ClaimDisputed",
-      fromBlock: startBlock, toBlock: current,
-    }),
-    pub.getContractEvents({
-      address: env.campaignEscrow, abi: campaignEscrowAbi, eventName: "BudgetReallocated",
-      fromBlock: startBlock, toBlock: current,
-    }),
-  ]);
+  if (current > collectedThrough) {
+    const fromBlock = collectedThrough + 1n;
+    const [settledLogs, rejectedLogs, disputedLogs, reallocLogs] = await Promise.all([
+      pub.getContractEvents({
+        address: env.conversionRegistry, abi: conversionRegistryAbi, eventName: "ClaimSettled",
+        fromBlock, toBlock: current,
+      }),
+      pub.getContractEvents({
+        address: env.conversionRegistry, abi: conversionRegistryAbi, eventName: "ClaimRejected",
+        fromBlock, toBlock: current,
+      }),
+      pub.getContractEvents({
+        address: env.conversionRegistry, abi: conversionRegistryAbi, eventName: "ClaimDisputed",
+        fromBlock, toBlock: current,
+      }),
+      pub.getContractEvents({
+        address: env.campaignEscrow, abi: campaignEscrowAbi, eventName: "BudgetReallocated",
+        fromBlock, toBlock: current,
+      }),
+    ]);
+    const inCampaign = (l: { args: unknown }) =>
+      (l.args as { campaignId: `0x${string}` }).campaignId === campaignId;
+    const settledThis = settledLogs.filter(inCampaign);
+    acc.settled += settledThis.length;
+    acc.fraudSettled += settledThis.filter(
+      (l) => (l.args as { publisher: string }).publisher.toLowerCase() === fraudAddress,
+    ).length;
+    acc.rejected += rejectedLogs.filter(inCampaign).length;
+    acc.disputed += disputedLogs.filter(inCampaign).length;
+    acc.reallocations += reallocLogs.filter(inCampaign).length;
+    collectedThrough = current; // advance only after all four queries succeeded
+  }
 
   const fraudLog = existsSync(".e2e/fraud.jsonl")
     ? readFileSync(".e2e/fraud.jsonl", "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
@@ -117,13 +138,11 @@ async function collect(): Promise<Summary> {
     : 0;
 
   return {
-    settled: settledLogs.length,
-    rejected: rejectedLogs.length,
-    disputed: disputedLogs.length,
-    fraudSettled: settledLogs.filter(
-      (l) => (l.args as { publisher: string }).publisher.toLowerCase() === fraudAddress,
-    ).length,
-    reallocations: reallocLogs.length,
+    settled: acc.settled,
+    rejected: acc.rejected,
+    disputed: acc.disputed,
+    fraudSettled: acc.fraudSettled,
+    reallocations: acc.reallocations,
     duplicateReverts: fraudLog.filter((e) => e.type === "duplicate" && e.status === "reverted").length,
     payments,
   };
@@ -194,6 +213,17 @@ async function reconcile(): Promise<string[]> {
   return errs;
 }
 
+async function reconcileWithRetry(): Promise<string[]> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await reconcile();
+    } catch (err) {
+      if (attempt >= 5) return [`reconcile failed after retries: ${(err as Error).message.split("\n")[0]}`];
+      await new Promise((r) => setTimeout(r, 3_000 * attempt));
+    }
+  }
+}
+
 const started = Date.now();
 let summary: Summary = { settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0, duplicateReverts: 0, payments: 0 };
 
@@ -217,7 +247,29 @@ while (Date.now() - started < DEADLINE_MS) {
   }
 }
 
-shutdown();
+// Graceful drain before reconciling: stop every producer, then give the
+// settlement module time to pay any claim it has recognized-but-not-yet-paid.
+// autoSettle (recognition) and the payout are separate txs; an abrupt kill
+// between them would leave escrow.recognizedTotal one claim ahead of the
+// payments log — a teardown artifact, not an accounting fault.
+for (const child of children) {
+  if (child !== settlement) child.kill("SIGTERM");
+}
+const paidTotal = (): bigint =>
+  existsSync(".e2e/payments.jsonl")
+    ? readFileSync(".e2e/payments.jsonl", "utf8").trim().split("\n").filter(Boolean)
+        .reduce((s, l) => s + BigInt((JSON.parse(l) as { amount: string }).amount), 0n)
+    : 0n;
+const drainStart = Date.now();
+while (Date.now() - drainStart < 60_000) {
+  await new Promise((r) => setTimeout(r, 3_000));
+  const campaign = await pub
+    .readContract({ address: env.campaignEscrow, abi: campaignEscrowAbi, functionName: "getCampaign", args: [campaignId] })
+    .catch(() => null);
+  if (campaign && campaign.recognizedTotal === paidTotal()) break;
+}
+settlement.kill("SIGTERM");
+summary = await collect().catch(() => summary);
 
 const failures: string[] = [];
 if (summary.settled < TARGET_SETTLED) failures.push(`settled ${summary.settled} < ${TARGET_SETTLED}`);
@@ -226,7 +278,7 @@ if (summary.rejected < 1) failures.push("no rejected claim");
 if (summary.duplicateReverts < 1) failures.push("no on-chain duplicate revert");
 if (summary.reallocations < 1) failures.push("no autonomous reallocation");
 if (summary.fraudSettled > 0) failures.push(`fraud publisher got ${summary.fraudSettled} settlements`);
-failures.push(...(await reconcile()));
+failures.push(...(await reconcileWithRetry()));
 
 console.log("\n[e2e] final:", JSON.stringify(summary));
 if (failures.length > 0) {

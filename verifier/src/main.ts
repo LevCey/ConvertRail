@@ -69,7 +69,10 @@ async function fetchEventByHash(hash: Hex): Promise<SignedConversionEvent | null
 let lastBlock = await pub.getBlockNumber();
 console.log(`verifier watching from block ${lastBlock} (policy ${localPolicyHash.slice(0, 10)}...)`);
 
+let ticking = false;
 setInterval(async () => {
+  if (ticking) return;
+  ticking = true;
   try {
     const current = await pub.getBlockNumber();
     if (current <= lastBlock) return;
@@ -117,5 +120,7 @@ setInterval(async () => {
     }
   } catch (err) {
     console.error("verifier loop error:", (err as Error).message);
+  } finally {
+    ticking = false;
   }
 }, 2_000);

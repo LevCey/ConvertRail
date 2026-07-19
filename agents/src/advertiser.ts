@@ -86,7 +86,10 @@ const outcomes: Outcome[] = [];
 
 console.log(`advertiser agent watching from block ${lastBlock}`);
 
+let ticking = false;
 setInterval(async () => {
+  if (ticking) return;
+  ticking = true;
   try {
     const current = await pub.getBlockNumber();
     if (current <= lastBlock) return;
@@ -152,5 +155,7 @@ setInterval(async () => {
     );
   } catch (err) {
     console.error("advertiser loop error:", (err as Error).message.split("\n")[0]);
+  } finally {
+    ticking = false;
   }
 }, 3_000);

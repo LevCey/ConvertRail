@@ -16,11 +16,21 @@ import {
 const WALLET_NAMES = ["advertiser", "operational", "verifier", "merchant", "pub-a", "pub-b", "pub-x"] as const;
 type WalletName = (typeof WALLET_NAMES)[number];
 
-const MIN_NATIVE = parseEther("0.02"); // gas floor per actor (native USDC, 18d)
-const TOPUP_NATIVE = parseEther("0.05");
+const MIN_NATIVE = parseEther("0.02"); // gas floor for the final assertion (native USDC, 18d)
+// Per-actor native-gas targets. Heavy tx senders (verifier, publishers,
+// operational/settlement) get more, sized well above a full target-20 run.
+const NATIVE_TARGET: Record<WalletName, bigint> = {
+  advertiser: parseEther("0.05"),
+  operational: parseEther("0.30"),
+  verifier: parseEther("0.50"),
+  merchant: 0n,
+  "pub-a": parseEther("0.25"),
+  "pub-b": parseEther("0.25"),
+  "pub-x": parseEther("0.20"),
+};
 const ADVERTISER_MIN_USDC = 10_000_000n; // covers the $10 campaign budget
 const ADVERTISER_TOPUP_USDC = 11_000_000n;
-const OPERATIONAL_MIN_USDC = 4_000_000n; // feeds Gateway deposits
+const OPERATIONAL_MIN_USDC = 4_000_000n; // float to fund Gateway deposits (>= GATEWAY_DEPOSIT)
 const GATEWAY_MIN_AVAILABLE = 2_500_000n; // available floor in Gateway
 const GATEWAY_DEPOSIT = "3"; // deposit size when below the floor
 
@@ -77,11 +87,13 @@ function loadOrCreateWallets(): WalletFile {
 }
 
 async function ensureNative(name: WalletName, address: Address): Promise<void> {
+  const target = NATIVE_TARGET[name];
   const balance = await pub.getBalance({ address });
-  if (balance >= MIN_NATIVE) return;
-  console.log(`funding ${name} with native gas...`);
+  if (balance >= target) return;
+  const topup = target - balance;
+  console.log(`funding ${name} with ${formatUnits(topup, 18)} native gas (target ${formatUnits(target, 18)})...`);
   await withRetry(`gas ${name}`, async () => {
-    const hash = await funder.sendTransaction({ to: address, value: TOPUP_NATIVE });
+    const hash = await funder.sendTransaction({ to: address, value: topup });
     await pub.waitForTransactionReceipt({ hash });
   });
 }
@@ -135,26 +147,41 @@ async function ensureGatewayDeposit(operational: WalletEntry): Promise<void> {
     privateKey: operational.privateKey,
     rpcUrl: env.rpcUrl,
   });
-  const before = await gateway.getBalances().catch(() => null);
-  const available = before?.gateway.available ?? 0n;
+  // A throttled getBalances must not be misread as "0 available" (which would
+  // force a needless deposit) — read it through the same backoff as every tx.
+  const readAvailable = () =>
+    withRetry("gateway getBalances", async () => (await gateway.getBalances()).gateway.available as bigint);
+
+  let available = await readAvailable();
   if (available >= GATEWAY_MIN_AVAILABLE) {
-    console.log(`gateway available: ${before!.gateway.formattedAvailable} (ok)`);
+    console.log(`gateway available: ${formatUnits(available, 6)} (ok)`);
     return;
   }
   console.log(`gateway available ${formatUnits(available, 6)} below floor, depositing ${GATEWAY_DEPOSIT} USDC...`);
-  const started = Date.now();
-  await withRetry("gateway deposit", () => gateway.deposit(GATEWAY_DEPOSIT));
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 5_000));
-    const b = await gateway.getBalances().catch(() => null);
-    if (b && b.gateway.available > available) {
-      console.log(`gateway credited in ${Math.round((Date.now() - started) / 1000)}s: ${b.gateway.formattedAvailable}`);
-      return;
+
+  // The SDK's deposit() chains several RPC calls and is not throttle-resilient;
+  // a throttle can surface even after the deposit tx already landed. So attempt,
+  // then confirm by a balance increase (authoritative) rather than the SDK return.
+  const target = available + parseUnits(GATEWAY_DEPOSIT, 6);
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    try {
+      await gateway.deposit(GATEWAY_DEPOSIT);
+    } catch (err) {
+      console.log(`  gateway deposit attempt ${attempt} raised: ${(err as Error).message.split("\n")[0]}`);
     }
-    if (Date.now() - started > 25 * 60_000) {
-      throw new Error("FAIL operational: gateway deposit not credited within 25min");
+    const waitStart = Date.now();
+    while (Date.now() - waitStart < 90_000) {
+      await new Promise((r) => setTimeout(r, 6_000));
+      const now = await readAvailable().catch(() => available);
+      if (now >= target) {
+        console.log(`gateway credited: ${formatUnits(now, 6)}`);
+        return;
+      }
+      if (now > available) available = now;
     }
+    await new Promise((r) => setTimeout(r, 8_000 * attempt));
   }
+  throw new Error(`FAIL operational: gateway deposit did not credit after retries (available ${formatUnits(available, 6)})`);
 }
 
 const wallets = loadOrCreateWallets();

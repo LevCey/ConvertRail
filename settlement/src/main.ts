@@ -130,7 +130,10 @@ async function trueUpPeriodically(): Promise<void> {
   }
 }
 
+let ticking = false;
 setInterval(async () => {
+  if (ticking) return;
+  ticking = true;
   try {
     const current = await pub.getBlockNumber();
     if (current > lastBlock) await collectVerified(current);
@@ -138,5 +141,7 @@ setInterval(async () => {
     await trueUpPeriodically();
   } catch (err) {
     console.error("settlement loop error:", (err as Error).message.split("\n")[0]);
+  } finally {
+    ticking = false;
   }
 }, 2_000);

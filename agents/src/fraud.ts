@@ -88,12 +88,17 @@ async function fabricatedAttack(): Promise<void> {
 let turn = 0;
 console.log(`fraud agent ${config.fraud.id} (${wallets[config.fraud.id].address}) attacking every ${config.fraud.attackIntervalMs}ms`);
 
+let ticking = false;
 setInterval(async () => {
+  if (ticking) return;
+  ticking = true;
   try {
     // Deterministic alternation: fabricated, duplicate, fabricated, ...
     if (turn++ % 2 === 0) await fabricatedAttack();
     else await duplicateAttack();
   } catch (err) {
     console.error("fraud loop error:", (err as Error).message.split("\n")[0]);
+  } finally {
+    ticking = false;
   }
 }, config.fraud.attackIntervalMs);

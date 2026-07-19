@@ -38,7 +38,10 @@ let sinceSeq = 0;
 let submitted = 0;
 console.log(`publisher ${publisherId} (${entry.address}) polling merchant-sim`);
 
+let ticking = false;
 setInterval(async () => {
+  if (ticking) return;
+  ticking = true;
   try {
     const res = await fetch(`${merchantBase}/events?publisherId=${publisherId}&sinceSeq=${sinceSeq}`);
     if (!res.ok) throw new Error(`merchant-sim ${res.status}`);
@@ -58,5 +61,7 @@ setInterval(async () => {
     }
   } catch (err) {
     console.error(`publisher ${publisherId} loop error:`, (err as Error).message.split("\n")[0]);
+  } finally {
+    ticking = false;
   }
 }, 2_000);
