@@ -12,7 +12,8 @@
     "verifier": "node --env-file=.env verifier/src/main.ts",
     "settlement": "node --env-file=.env settlement/src/main.ts",
     "advertiser": "node --env-file=.env agents/src/advertiser.ts",
-    "e2e": "node --env-file=.env scripts/e2e.ts"
+    "e2e": "node --env-file=.env scripts/e2e.ts",
+    "demo": "node --env-file=.env scripts/demo-load.ts"
   },
   "dependencies": {
     "@circle-fin/x402-batching": "^3.2.0",
