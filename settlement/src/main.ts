@@ -87,6 +87,8 @@ async function settleDue(current: bigint): Promise<void> {
       appendFileSync(
         PAYMENTS_LOG,
         JSON.stringify({
+          campaignId,
+          campaignName: config.campaign.name,
           claimId: claim.claimId.toString(),
           publisher: claim.publisher,
           amount: price.toString(),

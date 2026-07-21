@@ -6,7 +6,7 @@
     "shared"
   ],
   "scripts": {
-    "test": "node --test shared/src/*.test.ts verifier/src/*.test.ts agents/src/*.test.ts",
+    "test": "node --test shared/src/*.test.ts verifier/src/*.test.ts agents/src/*.test.ts dashboard/src/lib/*.test.ts",
     "provision": "node --env-file=.env scripts/provision-wallets.ts",
     "merchant-sim": "node --env-file=.env merchant-sim/src/main.ts",
     "verifier": "node --env-file=.env verifier/src/main.ts",

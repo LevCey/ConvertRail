@@ -26,6 +26,7 @@ const env = chainEnvFromProcess();
 const pub = publicClient(env);
 const wallet = walletClient(env, wallets[config.fraud.id].privateKey);
 const campaignId = campaignIdFromName(config.campaign.name);
+const fraudPublisher = wallets[config.fraud.id].address;
 const merchantBase = `http://localhost:${config.merchantSim.port}`;
 const victimId = config.publishers[0].id;
 
@@ -50,10 +51,12 @@ async function duplicateAttack(): Promise<void> {
   // Oldest victim event: most likely already claimed by the clean publisher.
   const target = victimEvents[0];
   if (!target) return;
+  const replayedNullifier = nullifier(campaignId, target.conversionId);
+  const replayedEvidenceHash = evidenceHash(target);
   const data = encodeFunctionData({
     abi: conversionRegistryAbi,
     functionName: "submitClaim",
-    args: [campaignId, nullifier(campaignId, target.conversionId), evidenceHash(target)],
+    args: [campaignId, replayedNullifier, replayedEvidenceHash],
   });
   const hash = await wallet.sendTransaction({
     to: env.conversionRegistry,
@@ -63,7 +66,17 @@ async function duplicateAttack(): Promise<void> {
   const receipt = await pub.waitForTransactionReceipt({ hash });
   appendFileSync(
     FRAUD_LOG,
-    JSON.stringify({ type: "duplicate", txHash: hash, status: receipt.status, conversionId: target.conversionId }) + "\n",
+    JSON.stringify({
+      type: "duplicate",
+      campaignId,
+      campaignName: config.campaign.name,
+      publisher: fraudPublisher,
+      nullifier: replayedNullifier,
+      evidenceHash: replayedEvidenceHash,
+      txHash: hash,
+      status: receipt.status,
+      conversionId: target.conversionId,
+    }) + "\n",
   );
   console.log(`duplicate attack on ${target.conversionId}: ${receipt.status} tx=${hash.slice(0, 14)}...`);
 }
@@ -71,22 +84,33 @@ async function duplicateAttack(): Promise<void> {
 async function fabricatedAttack(): Promise<void> {
   const fakeId = `fake-${++attackCounter}`;
   const fakeEvidence = keccak256(stringToBytes(`no-such-event-${attackCounter}-${Date.now()}`));
+  const fakeNullifier = nullifier(campaignId, fakeId);
   const hash = await wallet.writeContract({
     address: env.conversionRegistry,
     abi: conversionRegistryAbi,
     functionName: "submitClaim",
-    args: [campaignId, nullifier(campaignId, fakeId), fakeEvidence],
+    args: [campaignId, fakeNullifier, fakeEvidence],
   });
   const receipt = await pub.waitForTransactionReceipt({ hash });
   appendFileSync(
     FRAUD_LOG,
-    JSON.stringify({ type: "fabricated", txHash: hash, status: receipt.status, conversionId: fakeId }) + "\n",
+    JSON.stringify({
+      type: "fabricated",
+      campaignId,
+      campaignName: config.campaign.name,
+      publisher: fraudPublisher,
+      nullifier: fakeNullifier,
+      evidenceHash: fakeEvidence,
+      txHash: hash,
+      status: receipt.status,
+      conversionId: fakeId,
+    }) + "\n",
   );
   console.log(`fabricated attack ${fakeId}: submitted tx=${hash.slice(0, 14)}...`);
 }
 
 let turn = 0;
-console.log(`fraud agent ${config.fraud.id} (${wallets[config.fraud.id].address}) attacking every ${config.fraud.attackIntervalMs}ms`);
+console.log(`fraud agent ${config.fraud.id} (${fraudPublisher}) attacking every ${config.fraud.attackIntervalMs}ms`);
 
 let ticking = false;
 setInterval(async () => {

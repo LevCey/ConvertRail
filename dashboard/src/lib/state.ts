@@ -2,7 +2,7 @@
 // aggregates them into a serializable DashboardState. Every field is backed by
 // chain state (R11.4). Events are cached per campaign and only the un-scanned
 // block tail is re-queried on each poll (cheap steady state).
-import type { Address, Hex } from "viem";
+import { decodeFunctionData, type Address, type Hex } from "viem";
 import {
   ADDRESSES,
   campaignEscrowAbi,
@@ -14,6 +14,7 @@ import {
   type RejectedEventArgs,
   type SubmittedEventArgs,
 } from "./contracts";
+import { loadRuntimeEvidence, type DuplicateAttemptRecord } from "./runtime";
 
 const DEFAULT_LOOKBACK = 300_000n;
 
@@ -154,6 +155,7 @@ export interface DashboardState {
     pricePerConversion: string;
     budget: string;
     recognizedTotal: string;
+    paidTotal: string;
     reimbursedTotal: string;
     remaining: string;
     disputeWindowBlocks: number;
@@ -162,18 +164,24 @@ export interface DashboardState {
     address: Address;
     cap: string;
     recognized: string;
+    paid: string;
     verified: number;
     rejected: number;
     settled: number;
     qualityPct: number | null;
   }[];
-  feed: { claimId: string; publisher: Address; amount: string; txHash: Hex; blockNumber: string }[];
-  fraudLog: { claimId: string; publisher: Address; nullifier: Hex; evidenceHash: Hex; reason: string }[];
+  feed: {
+    claimId: string; publisher: Address; amount: string; txHash: Hex; blockNumber: string; paymentRef: string; elapsedMs: number;
+  }[];
+  fraudLog: {
+    key: string; type: "REJECTED" | "DUPLICATE_REVERT"; claimId: string; publisher: Address;
+    nullifier: Hex; evidenceHash: Hex; reason: string; txHash: Hex; blockNumber: string;
+  }[];
   reallocations: {
     from: Address; to: Address; amount: string; reason: string; newFromCap: string; newToCap: string; txHash: Hex; blockNumber: string;
   }[];
   pending: { claimId: string; publisher: Address; settleAtBlock: string; blocksLeft: number }[];
-  counters: { txCount: number; settled: number; verified: number; rejected: number; reallocations: number };
+  counters: { txCount: number; settled: number; paid: number; verified: number; rejected: number; duplicateReverts: number; refused: number; reallocations: number };
 }
 
 function decodeReason(reasonCode: Hex): string {
@@ -186,12 +194,55 @@ function decodeReason(reasonCode: Hex): string {
   }
 }
 
+async function verifiedDuplicate(
+  attempt: DuplicateAttemptRecord,
+  campaignId: Hex,
+): Promise<DashboardState["fraudLog"][number] | null> {
+  const pub = publicClient();
+  try {
+    const [receipt, tx] = await Promise.all([
+      pub.getTransactionReceipt({ hash: attempt.txHash }),
+      pub.getTransaction({ hash: attempt.txHash }),
+    ]);
+    if (
+      receipt.status !== "reverted" ||
+      tx.to?.toLowerCase() !== ADDRESSES.conversionRegistry.toLowerCase() ||
+      tx.from.toLowerCase() !== attempt.publisher.toLowerCase()
+    ) return null;
+
+    const decoded = decodeFunctionData({ abi: conversionRegistryAbi, data: tx.input });
+    if (decoded.functionName !== "submitClaim" || !decoded.args) return null;
+    const args = decoded.args as readonly [Hex, Hex, Hex];
+    if (
+      args.length !== 3 ||
+      args[0].toLowerCase() !== campaignId.toLowerCase() ||
+      args[1].toLowerCase() !== attempt.nullifier.toLowerCase() ||
+      args[2].toLowerCase() !== attempt.evidenceHash.toLowerCase()
+    ) return null;
+
+    return {
+      key: attempt.txHash,
+      type: "DUPLICATE_REVERT",
+      claimId: `dup:${attempt.conversionId}`,
+      publisher: attempt.publisher,
+      nullifier: attempt.nullifier,
+      evidenceHash: attempt.evidenceHash,
+      reason: "DUPLICATE_NULLIFIER",
+      txHash: attempt.txHash,
+      blockNumber: receipt.blockNumber.toString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getDashboardState(name?: string): Promise<DashboardState> {
   const cName = name ?? campaignName();
   const campaignId = campaignIdFromName(cName);
   const pub = publicClient();
   const c = await refresh(campaignId);
   const currentBlock = await effectiveCurrent();
+  const runtime = await loadRuntimeEvidence(campaignId);
 
   const campaignRaw = await pub
     .readContract({ address: ADDRESSES.campaignEscrow, abi: campaignEscrowAbi, functionName: "getCampaign", args: [campaignId] })
@@ -210,6 +261,29 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
   const rejectedBy = countBy(c.rejected);
   const settledBy = countBy(c.settled);
 
+  // A recognition event proves escrow accounting, not that Gateway accepted
+  // the payment. Only expose a row as paid when the settlement service's
+  // campaign-bound success record matches the corresponding chain event.
+  const recognizedByClaim = new Map(c.recognized.map((l) => [l.args.claimId.toString(), l]));
+  const confirmedPayments = runtime.payments.flatMap((payment) => {
+    const recognized = recognizedByClaim.get(payment.claimId);
+    if (
+      !recognized ||
+      recognized.args.publisher.toLowerCase() !== payment.publisher.toLowerCase() ||
+      recognized.args.amount.toString() !== payment.amount ||
+      recognized.transactionHash.toLowerCase() !== payment.settleTx.toLowerCase()
+    ) {
+      return [];
+    }
+    return [{ payment, recognized }];
+  });
+  const paidBy = new Map<string, bigint>();
+  for (const { payment } of confirmedPayments) {
+    const key = payment.publisher.toLowerCase();
+    paidBy.set(key, (paidBy.get(key) ?? 0n) + BigInt(payment.amount));
+  }
+  const paidTotal = [...paidBy.values()].reduce((sum, amount) => sum + amount, 0n);
+
   const publishers = await Promise.all(
     [...pubAddrs.values()].map(async (address) => {
       const alloc = await pub
@@ -222,6 +296,7 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
         address,
         cap: (alloc?.cap ?? 0n).toString(),
         recognized: (alloc?.recognized ?? 0n).toString(),
+        paid: (paidBy.get(key) ?? 0n).toString(),
         verified: v,
         rejected: r,
         settled: settledBy.get(key) ?? 0,
@@ -230,26 +305,42 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
     }),
   );
 
-  const feed = c.recognized
-    .map((l) => ({
-      claimId: l.args.claimId.toString(),
-      publisher: l.args.publisher,
-      amount: l.args.amount.toString(),
-      txHash: l.transactionHash,
-      blockNumber: l.blockNumber.toString(),
+  const feed = confirmedPayments
+    .map(({ payment, recognized }) => ({
+      claimId: payment.claimId,
+      publisher: payment.publisher,
+      amount: payment.amount,
+      txHash: recognized.transactionHash,
+      blockNumber: recognized.blockNumber.toString(),
+      paymentRef: payment.ref,
+      elapsedMs: payment.elapsedMs,
     }))
     .sort((a, b) => Number(BigInt(b.claimId) - BigInt(a.claimId)));
 
-  const fraudLog = reconstructFraudLog(
+  const rejectedByClaim = new Map(c.rejected.map((l) => [l.args.claimId.toString(), l]));
+  const rejectedFraud: DashboardState["fraudLog"] = reconstructFraudLog(
     c.submitted.map((l) => l.args),
     c.rejected.map((l) => l.args),
-  ).map((e) => ({
-    claimId: e.claimId.toString(),
-    publisher: e.publisher,
-    nullifier: e.nullifier,
-    evidenceHash: e.evidenceHash,
-    reason: e.reason,
-  }));
+  ).flatMap((e) => {
+    const rejection = rejectedByClaim.get(e.claimId.toString());
+    if (!rejection) return [];
+    return [{
+      key: `claim:${e.claimId}`,
+      type: "REJECTED" as const,
+      claimId: e.claimId.toString(),
+      publisher: e.publisher,
+      nullifier: e.nullifier,
+      evidenceHash: e.evidenceHash,
+      reason: e.reason,
+      txHash: rejection.transactionHash,
+      blockNumber: rejection.blockNumber.toString(),
+    }];
+  });
+  const duplicateFraud = (await Promise.all(
+    runtime.duplicateAttempts.map((attempt) => verifiedDuplicate(attempt, campaignId)),
+  )).filter((entry): entry is DashboardState["fraudLog"][number] => entry !== null);
+  const fraudLog = [...rejectedFraud, ...duplicateFraud]
+    .sort((a, b) => Number(BigInt(b.blockNumber) - BigInt(a.blockNumber)));
 
   const reallocations = c.reallocated
     .map((l) => ({
@@ -287,6 +378,7 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
   for (const group of [c.submitted, c.verified, c.rejected, c.settled, c.recognized, c.reallocated]) {
     for (const l of group) txHashes.add(l.transactionHash);
   }
+  for (const duplicate of duplicateFraud) txHashes.add(duplicate.txHash);
 
   return {
     campaignName: cName,
@@ -300,12 +392,13 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
           pricePerConversion: campaignRaw.pricePerConversion.toString(),
           budget: campaignRaw.budget.toString(),
           recognizedTotal: campaignRaw.recognizedTotal.toString(),
+          paidTotal: paidTotal.toString(),
           reimbursedTotal: campaignRaw.reimbursedTotal.toString(),
           remaining: (campaignRaw.budget - campaignRaw.recognizedTotal).toString(),
           disputeWindowBlocks: Number(campaignRaw.disputeWindowBlocks),
         }
       : null,
-    publishers: publishers.sort((a, b) => Number(BigInt(b.recognized) - BigInt(a.recognized))),
+    publishers: publishers.sort((a, b) => Number(BigInt(b.paid) - BigInt(a.paid))),
     feed,
     fraudLog,
     reallocations,
@@ -313,8 +406,11 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
     counters: {
       txCount: txHashes.size,
       settled: c.recognized.length,
+      paid: feed.length,
       verified: c.verified.length,
       rejected: c.rejected.length,
+      duplicateReverts: duplicateFraud.length,
+      refused: c.rejected.length + duplicateFraud.length,
       reallocations: c.reallocated.length,
     },
   };

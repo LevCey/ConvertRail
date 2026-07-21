@@ -108,6 +108,7 @@ export const conversionRegistryAbi = parseAbi([
   "struct Claim { bytes32 campaignId; address publisher; bytes32 nullifier; bytes32 evidenceHash; uint64 submittedAtBlock; uint64 verdictAtBlock; uint8 status; uint8 reason; }",
   "function getClaim(uint256 claimId) external view returns (Claim memory)",
   "function claimCount() external view returns (uint256)",
+  "function submitClaim(bytes32 campaignId, bytes32 nullifier, bytes32 evidenceHash) external returns (uint256)",
   "event ClaimSubmitted(uint256 indexed claimId, bytes32 indexed campaignId, address indexed publisher, bytes32 nullifier, bytes32 evidenceHash)",
   "event ClaimVerified(uint256 indexed claimId, bytes32 indexed campaignId, address indexed publisher)",
   "event ClaimRejected(uint256 indexed claimId, bytes32 indexed campaignId, address indexed publisher, uint8 reason)",

@@ -10,6 +10,7 @@ interface Publisher {
   address: string;
   cap: string;
   recognized: string;
+  paid: string;
   verified: number;
   rejected: number;
   settled: number;
@@ -21,13 +22,19 @@ interface FeedRow {
   amount: string;
   txHash: string;
   blockNumber: string;
+  paymentRef: string;
+  elapsedMs: number;
 }
 interface FraudRow {
+  key: string;
+  type: "REJECTED" | "DUPLICATE_REVERT";
   claimId: string;
   publisher: string;
   nullifier: string;
   evidenceHash: string;
   reason: string;
+  txHash: string;
+  blockNumber: string;
 }
 interface Realloc {
   from: string;
@@ -56,6 +63,7 @@ interface DashboardState {
     pricePerConversion: string;
     budget: string;
     recognizedTotal: string;
+    paidTotal: string;
     reimbursedTotal: string;
     remaining: string;
     disputeWindowBlocks: number;
@@ -65,7 +73,10 @@ interface DashboardState {
   fraudLog: FraudRow[];
   reallocations: Realloc[];
   pending: Pending[];
-  counters: { txCount: number; settled: number; verified: number; rejected: number; reallocations: number };
+  counters: {
+    txCount: number; settled: number; paid: number; verified: number; rejected: number;
+    duplicateReverts: number; refused: number; reallocations: number;
+  };
 }
 
 const usd = (s: string) =>
@@ -153,19 +164,23 @@ export default function Home() {
             <span className="count">{s.feed.length} paid</span>
           </h2>
           <p className="panel-note">
-            Each row is one <Gloss t="conversion">verified conversion</Gloss> paid in full, individually, the moment its{" "}
-            <Gloss t="window">dispute window</Gloss> closes. Every hash links to Arc.
+            Each row is one <Gloss t="conversion">verified conversion</Gloss> paid in full after its{" "}
+            <Gloss t="window">dispute window</Gloss> closes. The Gateway reference confirms payment; the Arc link shows
+            its escrow-recognition transaction.
           </p>
           <div className="rows scroll">
-            {s.feed.length === 0 && <div className="empty">No settlements yet.</div>}
+            {s.feed.length === 0 && <div className="empty">No confirmed payments yet.</div>}
             {s.feed.map((r) => (
               <div className="row" key={r.claimId}>
-                <span className="tag settled">SETTLED</span>
+                <span className="tag settled">PAID</span>
                 <span className="mono">#{r.claimId}</span>
                 <span className="pub">{label(r.publisher)}</span>
                 <span className="amt">{usd(r.amount)}</span>
+                <span className="cap" title={`Gateway payment reference ${r.paymentRef}`}>
+                  gw {shortHash(r.paymentRef)} · {r.elapsedMs}ms
+                </span>
                 <a className="link" href={txUrl(r.txHash)} target="_blank" rel="noreferrer">
-                  {shortHash(r.txHash)} ↗
+                  escrow ↗
                 </a>
               </div>
             ))}
@@ -183,8 +198,12 @@ export default function Home() {
                   <b>{usd(s.campaign.budget)}</b>
                 </div>
                 <div className="kv">
-                  <span>Recognized (paid)</span>
-                  <b className="teal">{usd(s.campaign.recognizedTotal)}</b>
+                  <span>Escrow recognized</span>
+                  <b>{usd(s.campaign.recognizedTotal)}</b>
+                </div>
+                <div className="kv">
+                  <span>Gateway paid</span>
+                  <b className="teal">{usd(s.campaign.paidTotal)}</b>
                 </div>
                 <div className="kv">
                   <span>Remaining</span>
@@ -231,7 +250,7 @@ export default function Home() {
                       </a>
                     </td>
                     <td>{usd(p.cap)}</td>
-                    <td className="teal">{usd(p.recognized)}</td>
+                    <td className="teal">{usd(p.paid)}</td>
                     <td>
                       <span className="teal">{p.verified}</span> / <span className="danger">{p.rejected}</span>
                     </td>
@@ -305,14 +324,14 @@ export default function Home() {
           <span className="count danger">{s.fraudLog.length} refused</span>
         </h2>
         <p className="panel-note">
-          Fabricated claims refused on-chain by <Gloss t="evidence">evidence-hash</Gloss> mismatch. Each capsule is
-          rebuilt purely from chain events — auditable by anyone.
+          Fabricated claims are backed by on-chain rejection events. Duplicate attempts are included only after their
+          reverted receipt and <code>submitClaim</code> calldata are verified against Arc.
         </p>
         <div className="rows scroll-sm">
           {s.fraudLog.length === 0 && <div className="empty">No refusals yet.</div>}
           {s.fraudLog.map((f) => (
-            <div className="row fraud" key={f.claimId}>
-              <span className="tag rejected">{f.reason}</span>
+            <div className="row fraud" key={f.key}>
+              <span className="tag rejected">{f.type === "DUPLICATE_REVERT" ? "DUPLICATE REVERT" : f.reason}</span>
               <span className="mono">#{f.claimId}</span>
               <span className="pub danger">{label(f.publisher)}</span>
               <span className="cap" title={`nullifier ${f.nullifier}`}>
@@ -321,13 +340,16 @@ export default function Home() {
               <span className="cap" title={`evidence hash ${f.evidenceHash}`}>
                 ev {shortHash(f.evidenceHash)}
               </span>
+              <a className="link" href={txUrl(f.txHash)} target="_blank" rel="noreferrer">
+                tx ↗
+              </a>
             </div>
           ))}
         </div>
       </section>
 
       <footer className="foot">
-        <span>Read-only console. Every number is backed by Arc testnet state — nothing simulated.</span>
+        <span>Read-only console. Rows come from Arc state plus successful Gateway payment records — no mock data.</span>
         <span className="muted">
           Glossary: verified conversion = a signed conversion event that passed deterministic checks · dispute window =
           blocks the advertiser has to object before payout · nullifier (nf) = per-conversion uniqueness tag that makes
@@ -350,7 +372,7 @@ function Header({ s, err, ts }: { s: DashboardState | null; err: string | null; 
             <Stat label="campaign" value={s.campaignName} />
             <Stat label="on-chain txs" value={String(s.counters.txCount)} accent />
             <Stat label="verified" value={String(s.counters.verified)} className="teal" />
-            <Stat label="refused" value={String(s.counters.rejected)} className="danger" />
+            <Stat label="refused" value={String(s.counters.refused)} className="danger" />
             <Stat label="block" value={`#${s.currentBlock}`} />
             <span className={`dot ${err ? "dot-err" : Date.now() - ts < 8000 ? "dot-live" : "dot-stale"}`} title={err ?? "live"} />
           </>
