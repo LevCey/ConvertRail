@@ -2,7 +2,7 @@
 // drives the full adversarial loop, and asserts the outcome. Fails loud
 // (non-zero exit, named check) if any target is missed within the deadline.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Address } from "viem";
 import {
   campaignEscrowAbi,
@@ -25,10 +25,11 @@ const campaignId = campaignIdFromName(config.campaign.name);
 const fraudAddress = wallets[config.fraud.id].address.toLowerCase();
 
 rmSync(".e2e", { recursive: true, force: true });
+mkdirSync(".e2e", { recursive: true });
 
 const children: ChildProcess[] = [];
-function run(name: string, args: string[]): ChildProcess {
-  const child = spawn("node", args, { env: process.env });
+function run(name: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}): ChildProcess {
+  const child = spawn("node", args, { env: { ...process.env, ...extraEnv } });
   child.stdout?.on("data", (d: Buffer) => process.stdout.write(`[${name}] ${d}`));
   child.stderr?.on("data", (d: Buffer) => process.stderr.write(`[${name}!] ${d}`));
   child.on("exit", (code) => {
@@ -53,6 +54,10 @@ async function waitFor(label: string, check: () => Promise<boolean>, timeoutMs: 
 }
 
 const startBlock = await pub.getBlockNumber();
+writeFileSync(
+  ".e2e/run.json",
+  JSON.stringify({ campaignId, campaignName: config.campaign.name, startBlock: startBlock.toString() }, null, 2) + "\n",
+);
 console.log(`[e2e] starting from block ${startBlock}, target ${TARGET_SETTLED} settled claims`);
 
 run("merchant", ["merchant-sim/src/main.ts"]);
@@ -73,7 +78,9 @@ await waitFor("campaign on-chain", async () => {
 }, 120_000);
 
 run("verifier", ["verifier/src/main.ts"]);
-const settlement = run("settlement", ["settlement/src/main.ts"]);
+const settlement = run("settlement", ["settlement/src/main.ts"], {
+  SETTLEMENT_MAX_RECOGNIZED: String(TARGET_SETTLED),
+});
 run("pub-a", ["agents/src/publisher.ts", "pub-a"]);
 run("pub-b", ["agents/src/publisher.ts", "pub-b"]);
 run("fraud", ["agents/src/fraud.ts"]);

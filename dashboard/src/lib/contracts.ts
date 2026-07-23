@@ -67,6 +67,18 @@ export function campaignIdFromName(name: string): Hex {
 
 // --- Resilient transport: the public Arc RPC throttles bursts with a
 // nonstandard code (-32011 "request limit reached"); absorb it with backoff. ---
+let rpcSchedule: Promise<void> = Promise.resolve();
+let nextRpcAt = 0;
+function paceRpc(): Promise<void> {
+  const turn = rpcSchedule.then(async () => {
+    const wait = Math.max(0, nextRpcAt - Date.now());
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    nextRpcAt = Date.now() + 200;
+  });
+  rpcSchedule = turn.catch(() => undefined);
+  return turn;
+}
+
 function resilientHttp(url: string): Transport {
   const inner = http(url);
   return ((params: Parameters<Transport>[0]) => {
@@ -75,6 +87,7 @@ function resilientHttp(url: string): Transport {
       const MAX = 8;
       for (let attempt = 1; ; attempt++) {
         try {
+          await paceRpc();
           return await (transport.request as (a: unknown, o?: unknown) => Promise<unknown>)(args, options);
         } catch (err) {
           const e = err as { details?: string; message?: string };

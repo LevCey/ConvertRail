@@ -8,6 +8,7 @@ import { GatewayClient } from "@circle-fin/x402-batching/client";
 import {
   agentRegistryAbi,
   chainEnvFromProcess,
+  loadDemoConfig,
   publicClient,
   walletClient,
   ROLE,
@@ -16,23 +17,42 @@ import {
 const WALLET_NAMES = ["advertiser", "operational", "verifier", "merchant", "pub-a", "pub-b", "pub-x"] as const;
 type WalletName = (typeof WALLET_NAMES)[number];
 
+const config = loadDemoConfig();
+const TARGET_SETTLED = Number(process.env.E2E_TARGET_SETTLED ?? 50);
+if (!Number.isSafeInteger(TARGET_SETTLED) || TARGET_SETTLED <= 0) {
+  throw new Error(`invalid E2E_TARGET_SETTLED ${process.env.E2E_TARGET_SETTLED}`);
+}
+
 const MIN_NATIVE = parseEther("0.02"); // gas floor for the final assertion (native USDC, 18d)
 // Per-actor native-gas targets. Heavy tx senders (verifier, publishers,
-// operational/settlement) get more, sized well above a full target-20 run.
+// operational/settlement) get more, sized above the 50+ settlement demo.
 const NATIVE_TARGET: Record<WalletName, bigint> = {
   advertiser: parseEther("0.05"),
-  operational: parseEther("0.30"),
-  verifier: parseEther("0.50"),
+  operational: parseEther("0.50"),
+  verifier: parseEther("1.00"),
   merchant: 0n,
-  "pub-a": parseEther("0.25"),
-  "pub-b": parseEther("0.25"),
-  "pub-x": parseEther("0.20"),
+  "pub-a": parseEther("0.50"),
+  "pub-b": parseEther("0.40"),
+  "pub-x": parseEther("0.30"),
 };
-const ADVERTISER_MIN_USDC = 10_000_000n; // covers the $10 campaign budget
-const ADVERTISER_TOPUP_USDC = 11_000_000n;
-const OPERATIONAL_MIN_USDC = 4_000_000n; // float to fund Gateway deposits (>= GATEWAY_DEPOSIT)
-const GATEWAY_MIN_AVAILABLE = 2_500_000n; // available floor in Gateway
-const GATEWAY_DEPOSIT = "3"; // deposit size when below the floor
+const ADVERTISER_TARGET_USDC = BigInt(config.campaign.budget) + parseUnits("1", 6);
+const GATEWAY_HEADROOM_USDC = parseUnits("1", 6); // absorbs claims landing during the harness stop interval
+const GATEWAY_MIN_AVAILABLE =
+  BigInt(config.campaign.pricePerConversion) * BigInt(TARGET_SETTLED) + GATEWAY_HEADROOM_USDC;
+const WALLET_GAS_RESERVE_USDC = parseUnits("1", 6);
+const FUNDER_RESERVE_USDC = parseUnits("0.5", 6);
+const gatewayWalletAbi = [
+  {
+    type: "function",
+    name: "deposit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
 
 interface WalletEntry {
   address: Address;
@@ -98,24 +118,112 @@ async function ensureNative(name: WalletName, address: Address): Promise<void> {
   });
 }
 
-async function ensureUsdc(name: WalletName, address: Address, min: bigint, topup: bigint): Promise<void> {
-  const balance = await pub.readContract({
+async function readUsdc(address: Address): Promise<bigint> {
+  return pub.readContract({
     address: env.usdc,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [address],
   });
-  if (balance >= min) return;
-  console.log(`funding ${name} with ${formatUnits(topup, 6)} USDC...`);
-  await withRetry(`usdc ${name}`, async () => {
-    const hash = await funder.writeContract({
+}
+
+async function transferUsdc(
+  label: string,
+  sender: ReturnType<typeof walletClient>,
+  recipient: Address,
+  amount: bigint,
+): Promise<void> {
+  console.log(`funding ${label} with ${formatUnits(amount, 6)} USDC...`);
+  await withRetry(`usdc ${label}`, async () => {
+    const hash = await sender.writeContract({
       address: env.usdc,
       abi: erc20Abi,
       functionName: "transfer",
-      args: [address, topup],
+      args: [recipient, amount],
     });
     await pub.waitForTransactionReceipt({ hash });
   });
+}
+
+async function ensureOperationalUsdc(address: Address, target: bigint): Promise<void> {
+  const balance = await readUsdc(address);
+  if (balance >= target) return;
+  const shortfall = target - balance;
+  const funderBalance = await readUsdc(funder.account!.address);
+  const transferable = funderBalance > FUNDER_RESERVE_USDC ? funderBalance - FUNDER_RESERVE_USDC : 0n;
+  if (transferable < shortfall) {
+    throw new Error(
+      `FAIL funder: ${formatUnits(transferable, 6)} transferable USDC after its gas reserve, ` +
+        `${formatUnits(shortfall, 6)} needed to fund operational to ${formatUnits(target, 6)}. ` +
+        `Top up ${funder.account!.address} from https://faucet.circle.com (Arc Testnet).`,
+    );
+  }
+  console.log(
+    `operational wallet ${formatUnits(balance, 6)} → ${formatUnits(target, 6)} ` +
+      `(Gateway shortfall + gas reserve)`,
+  );
+  await transferUsdc("operational", funder, address, shortfall);
+}
+
+async function ensureAdvertiserUsdc(operational: WalletEntry, operationalReserve: bigint): Promise<void> {
+  const advertiser = wallets.advertiser.address;
+  let remaining = ADVERTISER_TARGET_USDC - (await readUsdc(advertiser));
+  if (remaining <= 0n) return;
+
+  const operationalClient = walletClient(env, operational.privateKey);
+  const donors = [
+    {
+      name: "funder",
+      address: funder.account!.address,
+      client: funder,
+      reserve: FUNDER_RESERVE_USDC,
+    },
+    {
+      name: "operational",
+      address: operational.address,
+      client: operationalClient,
+      reserve: operationalReserve,
+    },
+  ] as const;
+
+  for (const donor of donors) {
+    const balance = await readUsdc(donor.address);
+    const transferable = balance > donor.reserve ? balance - donor.reserve : 0n;
+    const amount = transferable < remaining ? transferable : remaining;
+    if (amount === 0n) continue;
+    await transferUsdc(`advertiser from ${donor.name}`, donor.client, advertiser, amount);
+    remaining -= amount;
+    if (remaining === 0n) return;
+  }
+
+  throw new Error(
+    `FAIL pooled funding: ${formatUnits(remaining, 6)} additional USDC needed for advertiser after preserving ` +
+      `funder and operational gas/deposit reserves. Top up ${funder.account!.address} from ` +
+      `https://faucet.circle.com (Arc Testnet).`,
+  );
+}
+
+async function ensureFunderReserve(operational: WalletEntry): Promise<void> {
+  const funderBalance = await readUsdc(funder.account!.address);
+  if (funderBalance >= FUNDER_RESERVE_USDC) return;
+
+  const shortfall = FUNDER_RESERVE_USDC - funderBalance;
+  const operationalBalance = await readUsdc(operational.address);
+  const transferable =
+    operationalBalance > WALLET_GAS_RESERVE_USDC ? operationalBalance - WALLET_GAS_RESERVE_USDC : 0n;
+  if (transferable < shortfall) {
+    throw new Error(
+      `FAIL pooled funding: funder is ${formatUnits(shortfall, 6)} USDC below its gas reserve and operational ` +
+        `cannot replenish it without crossing its own reserve. Top up ${funder.account!.address} from ` +
+        `https://faucet.circle.com (Arc Testnet).`,
+    );
+  }
+  await transferUsdc(
+    "funder reserve from operational",
+    walletClient(env, operational.privateKey),
+    funder.account!.address,
+    shortfall,
+  );
 }
 
 async function ensureRole(name: WalletName, address: Address, role: number): Promise<void> {
@@ -141,31 +249,78 @@ async function ensureRole(name: WalletName, address: Address, role: number): Pro
   });
 }
 
-async function ensureGatewayDeposit(operational: WalletEntry): Promise<void> {
+async function readGatewayAvailable(operational: WalletEntry): Promise<bigint> {
   const gateway = new GatewayClient({
     chain: "arcTestnet",
     privateKey: operational.privateKey,
     rpcUrl: env.rpcUrl,
   });
-  // A throttled getBalances must not be misread as "0 available" (which would
-  // force a needless deposit) — read it through the same backoff as every tx.
-  const readAvailable = () =>
-    withRetry("gateway getBalances", async () => (await gateway.getBalances()).gateway.available as bigint);
+  // getBalance() is the Gateway API-only read. getBalances() also performs an
+  // Arc RPC wallet read, which makes a balance assertion needlessly throttle-prone.
+  return withRetry("gateway getBalance", async () => (await gateway.getBalance()).available as bigint);
+}
 
-  let available = await readAvailable();
+async function ensureGatewayDeposit(operational: WalletEntry, initialAvailable: bigint): Promise<bigint> {
+  const operationalClient = walletClient(env, operational.privateKey);
+  const readAvailable = () => readGatewayAvailable(operational);
+  let available = initialAvailable;
   if (available >= GATEWAY_MIN_AVAILABLE) {
     console.log(`gateway available: ${formatUnits(available, 6)} (ok)`);
-    return;
+    return available;
   }
-  console.log(`gateway available ${formatUnits(available, 6)} below floor, depositing ${GATEWAY_DEPOSIT} USDC...`);
+  const requiredDeposit = GATEWAY_MIN_AVAILABLE - available;
+  const depositAmount = formatUnits(requiredDeposit, 6);
+  console.log(
+    `gateway available ${formatUnits(available, 6)} below ${formatUnits(GATEWAY_MIN_AVAILABLE, 6)} target, ` +
+      `depositing ${depositAmount} USDC...`,
+  );
 
-  // The SDK's deposit() chains several RPC calls and is not throttle-resilient;
-  // a throttle can surface even after the deposit tx already landed. So attempt,
-  // then confirm by a balance increase (authoritative) rather than the SDK return.
-  const target = available + parseUnits(GATEWAY_DEPOSIT, 6);
+  const allowance = await withRetry("gateway allowance", () =>
+    pub.readContract({
+      address: env.usdc,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [operational.address, env.gatewayWallet],
+    }),
+  );
+  if (allowance < requiredDeposit) {
+    const approvalHash = await withRetry("gateway approval send", () =>
+      operationalClient.writeContract({
+        address: env.usdc,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [env.gatewayWallet, requiredDeposit],
+      }),
+    );
+    const approvalReceipt = await withRetry("gateway approval receipt", () =>
+      pub.waitForTransactionReceipt({ hash: approvalHash }),
+    );
+    if (approvalReceipt.status !== "success") {
+      throw new Error(`FAIL operational: Gateway approval reverted (${approvalHash})`);
+    }
+  }
+
+  // Send deposit directly with the repository's throttle-resilient clients.
+  // The SDK performs unwrapped RPC reads around this same contract call and can
+  // report a false failure after a successful approval on the public Arc RPC.
+  const target = GATEWAY_MIN_AVAILABLE;
   for (let attempt = 1; attempt <= 8; attempt++) {
     try {
-      await gateway.deposit(GATEWAY_DEPOSIT);
+      const depositTxHash = await withRetry("gateway deposit send", () =>
+        operationalClient.writeContract({
+          address: env.gatewayWallet,
+          abi: gatewayWalletAbi,
+          functionName: "deposit",
+          args: [env.usdc, requiredDeposit],
+          gas: 120_000n,
+        }),
+      );
+      const receipt = await withRetry("gateway deposit receipt", () =>
+        pub.waitForTransactionReceipt({ hash: depositTxHash }),
+      );
+      if (receipt.status !== "success") {
+        throw new Error(`Gateway deposit reverted (${depositTxHash})`);
+      }
     } catch (err) {
       console.log(`  gateway deposit attempt ${attempt} raised: ${(err as Error).message.split("\n")[0]}`);
     }
@@ -175,7 +330,7 @@ async function ensureGatewayDeposit(operational: WalletEntry): Promise<void> {
       const now = await readAvailable().catch(() => available);
       if (now >= target) {
         console.log(`gateway credited: ${formatUnits(now, 6)}`);
-        return;
+        return now;
       }
       if (now > available) available = now;
     }
@@ -190,8 +345,6 @@ for (const name of WALLET_NAMES) {
   if (name === "merchant") continue; // signs events off-chain only, needs no funds
   await ensureNative(name, wallets[name].address);
 }
-await ensureUsdc("advertiser", wallets.advertiser.address, ADVERTISER_MIN_USDC, ADVERTISER_TOPUP_USDC);
-await ensureUsdc("operational", wallets.operational.address, OPERATIONAL_MIN_USDC, OPERATIONAL_MIN_USDC);
 
 await ensureRole("advertiser", wallets.advertiser.address, ROLE.ADVERTISER);
 await ensureRole("verifier", wallets.verifier.address, ROLE.VERIFIER);
@@ -199,19 +352,48 @@ await ensureRole("pub-a", wallets["pub-a"].address, ROLE.PUBLISHER);
 await ensureRole("pub-b", wallets["pub-b"].address, ROLE.PUBLISHER);
 await ensureRole("pub-x", wallets["pub-x"].address, ROLE.PUBLISHER);
 
-await ensureGatewayDeposit(wallets.operational);
+const initialGatewayAvailable = await readGatewayAvailable(wallets.operational);
+const requiredGatewayDeposit =
+  initialGatewayAvailable < GATEWAY_MIN_AVAILABLE ? GATEWAY_MIN_AVAILABLE - initialGatewayAvailable : 0n;
+const operationalReserve = requiredGatewayDeposit + WALLET_GAS_RESERVE_USDC;
+await ensureOperationalUsdc(wallets.operational.address, operationalReserve);
+await ensureAdvertiserUsdc(wallets.operational, operationalReserve);
+
+const gatewayAvailable = await ensureGatewayDeposit(wallets.operational, initialGatewayAvailable);
+await ensureFunderReserve(wallets.operational);
 
 // Final loud assertion pass.
 const failures: string[] = [];
 for (const name of WALLET_NAMES) {
   if (name === "merchant") continue;
-  const balance = await pub.getBalance({ address: wallets[name].address });
+  const balance = await withRetry(`assert gas ${name}`, () => pub.getBalance({ address: wallets[name].address }));
   if (balance < MIN_NATIVE) failures.push(`${name}: native ${formatUnits(balance, 18)} < floor`);
+}
+const advertiserUsdc = await withRetry("assert advertiser USDC", () =>
+  readUsdc(wallets.advertiser.address),
+);
+if (advertiserUsdc < ADVERTISER_TARGET_USDC) {
+  failures.push(
+    `advertiser: USDC ${formatUnits(advertiserUsdc, 6)} < funded target ${formatUnits(ADVERTISER_TARGET_USDC, 6)}`,
+  );
+}
+const funderUsdc = await withRetry("assert funder USDC", () => readUsdc(funder.account!.address));
+if (funderUsdc < FUNDER_RESERVE_USDC) {
+  failures.push(`funder: USDC ${formatUnits(funderUsdc, 6)} < gas reserve ${formatUnits(FUNDER_RESERVE_USDC, 6)}`);
+}
+if (gatewayAvailable < GATEWAY_MIN_AVAILABLE) {
+  failures.push(
+    `operational: Gateway available ${formatUnits(gatewayAvailable, 6)} < demo target ${formatUnits(GATEWAY_MIN_AVAILABLE, 6)}`,
+  );
 }
 if (failures.length > 0) {
   console.error("PROVISIONING FAILED:\n" + failures.map((f) => `  - ${f}`).join("\n"));
   process.exit(1);
 }
+console.log(
+  `  gateway: ${formatUnits(gatewayAvailable, 6)} available ` +
+    `(covers ${TARGET_SETTLED} × ${formatUnits(BigInt(config.campaign.pricePerConversion), 6)} USDC + headroom)`,
+);
 console.log("provisioning complete:");
 for (const name of WALLET_NAMES) {
   console.log(`  ${name}: ${wallets[name].address}`);

@@ -22,6 +22,12 @@ export interface DuplicateAttemptRecord {
   conversionId: string;
 }
 
+export interface RunMetadata {
+  campaignId: Hex;
+  campaignName: string;
+  startBlock: bigint;
+}
+
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const UINT = /^(0|[1-9][0-9]*)$/;
@@ -121,6 +127,31 @@ export function parseDuplicateAttempts(text: string, campaignId: Hex): Duplicate
   return [...byTx.values()];
 }
 
+export function parseRunMetadata(text: string, campaignId: Hex): RunMetadata | null {
+  try {
+    const v = object(JSON.parse(text));
+    if (
+      !v ||
+      typeof v.campaignId !== "string" ||
+      !BYTES32.test(v.campaignId) ||
+      v.campaignId.toLowerCase() !== campaignId.toLowerCase() ||
+      typeof v.campaignName !== "string" ||
+      v.campaignName.length === 0 ||
+      typeof v.startBlock !== "string" ||
+      !UINT.test(v.startBlock)
+    ) {
+      return null;
+    }
+    return {
+      campaignId: v.campaignId as Hex,
+      campaignName: v.campaignName,
+      startBlock: BigInt(v.startBlock),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function runtimeLog(name: string, override?: string): Promise<string> {
   const candidates = [
     override,
@@ -151,4 +182,8 @@ export async function loadRuntimeEvidence(campaignId: Hex): Promise<{
     payments: parsePaymentRecords(payments, campaignId),
     duplicateAttempts: parseDuplicateAttempts(fraud, campaignId),
   };
+}
+
+export async function loadRunMetadata(campaignId: Hex): Promise<RunMetadata | null> {
+  return parseRunMetadata(await runtimeLog("run.json", process.env.RUN_LOG_PATH), campaignId);
 }

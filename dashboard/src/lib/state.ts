@@ -14,7 +14,7 @@ import {
   type RejectedEventArgs,
   type SubmittedEventArgs,
 } from "./contracts";
-import { loadRuntimeEvidence, type DuplicateAttemptRecord } from "./runtime";
+import { loadRunMetadata, loadRuntimeEvidence, type DuplicateAttemptRecord } from "./runtime";
 
 const DEFAULT_LOOKBACK = 300_000n;
 
@@ -28,6 +28,14 @@ interface CampaignCache {
   campaignId: Hex;
   fromBlock: bigint;
   lastScanned: bigint;
+  created: RawLog<{
+    advertiser: Address;
+    operationalWallet: Address;
+    pricePerConversion: bigint;
+    budget: bigint;
+    disputeWindowBlocks: bigint;
+    policyHash: Hex;
+  }>[];
   submitted: RawLog<SubmittedEventArgs>[];
   verified: RawLog<{ claimId: bigint; publisher: Address }>[];
   rejected: RawLog<RejectedEventArgs>[];
@@ -42,12 +50,15 @@ interface CampaignCache {
     newToCap: bigint;
   }>[];
   enrolled: RawLog<{ publisher: Address; cap: bigint }>[];
+  truedUp: RawLog<{ operationalWallet: Address; amount: bigint }>[];
 }
 
 const cache = new Map<Hex, CampaignCache>();
 
-async function startFromBlock(): Promise<bigint> {
+async function startFromBlock(campaignId: Hex): Promise<bigint> {
   if (process.env.CAMPAIGN_FROM_BLOCK) return BigInt(process.env.CAMPAIGN_FROM_BLOCK);
+  const run = await loadRunMetadata(campaignId);
+  if (run) return run.startBlock;
   const current = await publicClient().getBlockNumber();
   return current > DEFAULT_LOOKBACK ? current - DEFAULT_LOOKBACK : 0n;
 }
@@ -64,45 +75,61 @@ async function effectiveCurrent(): Promise<bigint> {
   return cur;
 }
 
-async function scanChunk(campaignId: Hex, fromBlock: bigint, toBlock: bigint): Promise<Required<Pick<CampaignCache, "submitted" | "verified" | "rejected" | "settled" | "recognized" | "reallocated" | "enrolled">>> {
+async function scanChunk(campaignId: Hex, fromBlock: bigint, toBlock: bigint): Promise<Required<Pick<CampaignCache, "created" | "submitted" | "verified" | "rejected" | "settled" | "recognized" | "reallocated" | "enrolled" | "truedUp">>> {
   const pub = publicClient();
   const reg = { address: ADDRESSES.conversionRegistry, abi: conversionRegistryAbi } as const;
   const esc = { address: ADDRESSES.campaignEscrow, abi: campaignEscrowAbi } as const;
   const range = { fromBlock, toBlock } as const;
 
-  const [submitted, verified, rejected, settled, recognized, reallocated, enrolled] = await Promise.all([
-    pub.getContractEvents({ ...reg, eventName: "ClaimSubmitted", args: { campaignId }, ...range }),
-    pub.getContractEvents({ ...reg, eventName: "ClaimVerified", args: { campaignId }, ...range }),
-    pub.getContractEvents({ ...reg, eventName: "ClaimRejected", args: { campaignId }, ...range }),
-    pub.getContractEvents({ ...reg, eventName: "ClaimSettled", args: { campaignId }, ...range }),
-    pub.getContractEvents({ ...esc, eventName: "PayoutRecognized", args: { campaignId }, ...range }),
-    pub.getContractEvents({ ...esc, eventName: "BudgetReallocated", args: { campaignId }, ...range }),
-    pub.getContractEvents({ ...esc, eventName: "PublisherEnrolled", args: { campaignId }, ...range }),
+  const [registryLogs, escrowLogs] = await Promise.all([
+    pub.getContractEvents({ ...reg, ...range }),
+    pub.getContractEvents({ ...esc, ...range }),
   ]);
 
-  const map = <A>(logs: readonly { args: unknown; blockNumber: bigint | null; transactionHash: Hex | null }[]): RawLog<A>[] =>
-    logs.map((l) => ({ args: l.args as A, blockNumber: l.blockNumber ?? 0n, transactionHash: l.transactionHash ?? ("0x" as Hex) }));
+  type ContractLog = {
+    eventName: string;
+    args: { campaignId?: Hex };
+    blockNumber: bigint | null;
+    transactionHash: Hex | null;
+  };
+  const registry = registryLogs as unknown as ContractLog[];
+  const escrow = escrowLogs as unknown as ContractLog[];
+  const select = <A>(logs: ContractLog[], eventName: string): RawLog<A>[] =>
+    logs
+      .filter(
+        (log) =>
+          log.eventName === eventName &&
+          log.args.campaignId?.toLowerCase() === campaignId.toLowerCase(),
+      )
+      .map((log) => ({
+        args: log.args as A,
+        blockNumber: log.blockNumber ?? 0n,
+        transactionHash: log.transactionHash ?? ("0x" as Hex),
+      }));
 
   return {
-    submitted: map(submitted),
-    verified: map(verified),
-    rejected: map(rejected),
-    settled: map(settled),
-    recognized: map(recognized),
-    reallocated: map(reallocated),
-    enrolled: map(enrolled),
+    created: select(escrow, "CampaignCreated"),
+    submitted: select(registry, "ClaimSubmitted"),
+    verified: select(registry, "ClaimVerified"),
+    rejected: select(registry, "ClaimRejected"),
+    settled: select(registry, "ClaimSettled"),
+    recognized: select(escrow, "PayoutRecognized"),
+    reallocated: select(escrow, "BudgetReallocated"),
+    enrolled: select(escrow, "PublisherEnrolled"),
+    truedUp: select(escrow, "TruedUp"),
   };
 }
 
 // The public RPC caps eth_getLogs at a 10,000-block range, so scan in
 // <=9,000-block windows (event types parallel per window, windows sequential).
-async function scanRange(campaignId: Hex, fromBlock: bigint, toBlock: bigint): Promise<Required<Pick<CampaignCache, "submitted" | "verified" | "rejected" | "settled" | "recognized" | "reallocated" | "enrolled">>> {
-  const acc = { submitted: [], verified: [], rejected: [], settled: [], recognized: [], reallocated: [], enrolled: [] } as Awaited<ReturnType<typeof scanChunk>>;
+async function scanRange(campaignId: Hex, fromBlock: bigint, toBlock: bigint): Promise<Awaited<ReturnType<typeof scanChunk>>> {
+  const acc = { created: [], submitted: [], verified: [], rejected: [], settled: [], recognized: [], reallocated: [], enrolled: [], truedUp: [] } as Awaited<ReturnType<typeof scanChunk>>;
   if (fromBlock > toBlock) return acc;
   const CHUNK = 9_000n;
   for (let start = fromBlock; start <= toBlock; start += CHUNK + 1n) {
     const end = start + CHUNK < toBlock ? start + CHUNK : toBlock;
     const c = await scanChunk(campaignId, start, end);
+    acc.created.push(...c.created);
     acc.submitted.push(...c.submitted);
     acc.verified.push(...c.verified);
     acc.rejected.push(...c.rejected);
@@ -110,27 +137,29 @@ async function scanRange(campaignId: Hex, fromBlock: bigint, toBlock: bigint): P
     acc.recognized.push(...c.recognized);
     acc.reallocated.push(...c.reallocated);
     acc.enrolled.push(...c.enrolled);
+    acc.truedUp.push(...c.truedUp);
   }
   return acc;
 }
 
-async function refresh(campaignId: Hex): Promise<CampaignCache> {
-  const current = await effectiveCurrent();
+async function refresh(campaignId: Hex, current: bigint): Promise<CampaignCache> {
   let entry = cache.get(campaignId);
 
   if (!entry) {
-    const fromBlock = await startFromBlock();
+    const fromBlock = await startFromBlock(campaignId);
     entry = {
       campaignId,
       fromBlock,
       lastScanned: fromBlock - 1n,
-      submitted: [], verified: [], rejected: [], settled: [], recognized: [], reallocated: [], enrolled: [],
+      created: [], submitted: [], verified: [], rejected: [], settled: [], recognized: [], reallocated: [],
+      enrolled: [], truedUp: [],
     };
     cache.set(campaignId, entry);
   }
 
   if (current > entry.lastScanned) {
     const delta = await scanRange(campaignId, entry.lastScanned + 1n, current);
+    entry.created.push(...delta.created);
     entry.submitted.push(...(delta.submitted ?? []));
     entry.verified.push(...(delta.verified ?? []));
     entry.rejected.push(...(delta.rejected ?? []));
@@ -138,6 +167,7 @@ async function refresh(campaignId: Hex): Promise<CampaignCache> {
     entry.recognized.push(...(delta.recognized ?? []));
     entry.reallocated.push(...(delta.reallocated ?? []));
     entry.enrolled.push(...(delta.enrolled ?? []));
+    entry.truedUp.push(...delta.truedUp);
     entry.lastScanned = current; // advance only after a fully successful scan
   }
   return entry;
@@ -194,10 +224,14 @@ function decodeReason(reasonCode: Hex): string {
   }
 }
 
+const verifiedDuplicateCache = new Map<Hex, DashboardState["fraudLog"][number]>();
+
 async function verifiedDuplicate(
   attempt: DuplicateAttemptRecord,
   campaignId: Hex,
 ): Promise<DashboardState["fraudLog"][number] | null> {
+  const cached = verifiedDuplicateCache.get(attempt.txHash);
+  if (cached) return cached;
   const pub = publicClient();
   try {
     const [receipt, tx] = await Promise.all([
@@ -220,7 +254,7 @@ async function verifiedDuplicate(
       args[2].toLowerCase() !== attempt.evidenceHash.toLowerCase()
     ) return null;
 
-    return {
+    const verified: DashboardState["fraudLog"][number] = {
       key: attempt.txHash,
       type: "DUPLICATE_REVERT",
       claimId: `dup:${attempt.conversionId}`,
@@ -231,6 +265,8 @@ async function verifiedDuplicate(
       txHash: attempt.txHash,
       blockNumber: receipt.blockNumber.toString(),
     };
+    verifiedDuplicateCache.set(attempt.txHash, verified);
+    return verified;
   } catch {
     return null;
   }
@@ -240,18 +276,47 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
   const cName = name ?? campaignName();
   const campaignId = campaignIdFromName(cName);
   const pub = publicClient();
-  const c = await refresh(campaignId);
   const currentBlock = await effectiveCurrent();
+  const c = await refresh(campaignId, currentBlock);
   const runtime = await loadRuntimeEvidence(campaignId);
 
-  const campaignRaw = await pub
-    .readContract({ address: ADDRESSES.campaignEscrow, abi: campaignEscrowAbi, functionName: "getCampaign", args: [campaignId] })
-    .catch(() => null);
+  const created = c.created[0]?.args;
+  const recognizedFromEvents = c.recognized.reduce((sum, log) => sum + log.args.amount, 0n);
+  const reimbursedFromEvents = c.truedUp.reduce((sum, log) => sum + log.args.amount, 0n);
+  const campaignRaw = created
+    ? {
+        ...created,
+        recognizedTotal: recognizedFromEvents,
+        reimbursedTotal: reimbursedFromEvents,
+      }
+    : await pub
+        .readContract({
+          address: ADDRESSES.campaignEscrow,
+          abi: campaignEscrowAbi,
+          functionName: "getCampaign",
+          args: [campaignId],
+        })
+        .catch(() => null);
   const exists = !!campaignRaw && campaignRaw.budget > 0n;
 
   // Per-publisher aggregation
   const pubAddrs = new Map<string, Address>();
   for (const e of c.enrolled) pubAddrs.set(e.args.publisher.toLowerCase(), e.args.publisher);
+  const allocations = new Map<string, { cap: bigint; recognized: bigint }>();
+  for (const e of c.enrolled) {
+    allocations.set(e.args.publisher.toLowerCase(), { cap: e.args.cap, recognized: 0n });
+  }
+  for (const e of c.recognized) {
+    const key = e.args.publisher.toLowerCase();
+    const allocation = allocations.get(key);
+    if (allocation) allocation.recognized += e.args.amount;
+  }
+  for (const e of [...c.reallocated].sort((a, b) => Number(a.blockNumber - b.blockNumber))) {
+    const from = allocations.get(e.args.fromPublisher.toLowerCase());
+    const to = allocations.get(e.args.toPublisher.toLowerCase());
+    if (from) from.cap = e.args.newFromCap;
+    if (to) to.cap = e.args.newToCap;
+  }
   const countBy = (logs: RawLog<{ publisher: Address }>[]) => {
     const m = new Map<string, number>();
     for (const l of logs) m.set(l.args.publisher.toLowerCase(), (m.get(l.args.publisher.toLowerCase()) ?? 0) + 1);
@@ -284,11 +349,8 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
   }
   const paidTotal = [...paidBy.values()].reduce((sum, amount) => sum + amount, 0n);
 
-  const publishers = await Promise.all(
-    [...pubAddrs.values()].map(async (address) => {
-      const alloc = await pub
-        .readContract({ address: ADDRESSES.campaignEscrow, abi: campaignEscrowAbi, functionName: "getAllocation", args: [campaignId, address] })
-        .catch(() => null);
+  const publishers = [...pubAddrs.values()].map((address) => {
+      const alloc = allocations.get(address.toLowerCase());
       const key = address.toLowerCase();
       const v = verifiedBy.get(key) ?? 0;
       const r = rejectedBy.get(key) ?? 0;
@@ -302,8 +364,7 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
         settled: settledBy.get(key) ?? 0,
         qualityPct: v + r > 0 ? Math.round((v / (v + r)) * 100) : null,
       };
-    }),
-  );
+    });
 
   const feed = confirmedPayments
     .map(({ payment, recognized }) => ({
@@ -336,6 +397,9 @@ export async function getDashboardState(name?: string): Promise<DashboardState> 
       blockNumber: rejection.blockNumber.toString(),
     }];
   });
+  // The shared dashboard transport paces every RPC request, so these checks can
+  // be scheduled together without bursting the public endpoint. Valid immutable
+  // capsules are cached by transaction hash for subsequent live polls.
   const duplicateFraud = (await Promise.all(
     runtime.duplicateAttempts.map((attempt) => verifiedDuplicate(attempt, campaignId)),
   )).filter((entry): entry is DashboardState["fraudLog"][number] => entry !== null);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Hex } from "viem";
-import { parseDuplicateAttempts, parsePaymentRecords } from "./runtime.ts";
+import { parseDuplicateAttempts, parsePaymentRecords, parseRunMetadata } from "./runtime.ts";
 
 const campaign = `0x${"11".repeat(32)}` as Hex;
 const otherCampaign = `0x${"22".repeat(32)}` as Hex;
@@ -63,4 +63,28 @@ test("duplicate attempts require a campaign-bound reverted transaction capsule",
   assert.deepEqual(parsed, [
     { campaignId: campaign, publisher, nullifier, evidenceHash, txHash: tx, status: "reverted", conversionId: "c-1" },
   ]);
+});
+
+test("run metadata provides a campaign-bound scan start", () => {
+  assert.deepEqual(
+    parseRunMetadata(
+      JSON.stringify({ campaignId: campaign, campaignName: "poc-demo-5", startBlock: "53280333" }),
+      campaign,
+    ),
+    { campaignId: campaign, campaignName: "poc-demo-5", startBlock: 53280333n },
+  );
+  assert.equal(
+    parseRunMetadata(
+      JSON.stringify({ campaignId: otherCampaign, campaignName: "poc-demo-5", startBlock: "53280333" }),
+      campaign,
+    ),
+    null,
+  );
+  assert.equal(
+    parseRunMetadata(
+      JSON.stringify({ campaignId: campaign, campaignName: "poc-demo-5", startBlock: "-1" }),
+      campaign,
+    ),
+    null,
+  );
 });
