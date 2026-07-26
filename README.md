@@ -68,7 +68,7 @@ Minimum payout thresholds exist because settlement is expensive. A $0.50 convers
 | `merchant-sim/` | Simulated conversion source emitting signed events (demo stand-in for an advertiser's conversion system) |
 | `settlement/` | Nanopayments integration and escrow reconciliation |
 | `dashboard/` | Live settlement feed, campaign state, fraud log (Next.js) |
-| `scripts/` | Wallet provisioning, demo load script, repo checks |
+| `scripts/` | Wallet provisioning, demo orchestrator, end-to-end acceptance harness |
 
 ## Verification model, honestly
 
@@ -82,19 +82,78 @@ The verifier in this MVP is a service applying published deterministic rules, wi
 
 ## Circle stack
 
-| Tool | Role | Status |
+| Tool | How ConvertRail uses it | Status |
 |---|---|---|
-| Circle Wallets | Isolated dev-controlled wallet per agent | Core |
-| Circle Contracts | USDC escrow, campaign rules, claim registry | Core |
-| Nanopayments | Instant, gas-free, per-conversion payout — the headline mechanic | Core |
-| Gateway | The settlement layer under Nanopayments (off-chain aggregation, batched on-chain settlement) | Core, via Nanopayments |
-| CCTP / StableFX | Cross-chain and cross-border publisher payouts | Roadmap |
+| **Nanopayments** | The headline mechanic. Every verified conversion is paid on its own — instant, gas-free, full amount, no threshold. The settlement module signs one EIP-3009 authorization per conversion and settles it through the Gateway facilitator (`@circle-fin/x402-batching`) — a median round trip of 477 ms across the 50 payments of the reference run. | Integrated |
+| **Gateway** | The layer underneath Nanopayments: the operational wallet holds a USDC balance in Gateway, each authorization is verified off-chain in a few hundred milliseconds, and settlement lands on-chain in batches. | Integrated |
+| **USDC on Arc** | The entire economy of the demo. Campaign budgets, escrow accounting, publisher payouts, and gas are all denominated in USDC. | Integrated |
+| Paymaster | Not applicable here. Paymaster exists to pay gas in USDC on chains where gas is something else; on Arc gas already *is* USDC, so `CampaignEscrow` provisions publisher gas directly at campaign creation. | Not applicable |
+| Circle Wallets | Not used. Each agent holds an isolated keypair generated locally by `npm run provision`, which is what the demo's key isolation needs. Custodial key management is a production concern, and Circle Wallets is the answer we would reach for there — but claiming it today would mean claiming code that isn't in this repository. | Not used |
+| Circle Contracts | Not used. The three contracts are hand-written Solidity, deployed with Foundry and source-verified on the explorer; the escrow's cap, dispute-window, and refusal logic is specific enough that a template deployment would not carry it. | Not used |
+| CCTP / StableFX | Cross-chain and cross-border publisher payouts. | Roadmap |
 
-Paymaster is deliberately absent: on Arc, gas is already USDC, so the escrow provisions publisher gas directly.
+## Deployed on Arc testnet
+
+Chain ID `5042002`. All three contracts are source-verified — the logic below can be read on-chain, not just in this repository.
+
+| Contract | Address |
+|---|---|
+| `AgentRegistry` | [`0x3A1F744d7F5B1F6E462727A8897CC88E273F730a`](https://testnet.arcscan.app/address/0x3A1F744d7F5B1F6E462727A8897CC88E273F730a) |
+| `ConversionRegistry` | [`0xbdb4e36DFb61A446Ec6900351b1A47754e389432`](https://testnet.arcscan.app/address/0xbdb4e36DFb61A446Ec6900351b1A47754e389432) |
+| `CampaignEscrow` | [`0x194aCFf27b8fbe332dab5ffba8d5318708d74520`](https://testnet.arcscan.app/address/0x194aCFf27b8fbe332dab5ffba8d5318708d74520) |
+
+## Running it
+
+Prerequisites: Node 24+, [Foundry](https://getfoundry.sh) for the contracts, and an Arc testnet wallet funded with USDC from the [Circle faucet](https://faucet.circle.com/).
+
+```bash
+npm install
+cp .env.example .env      # set FUNDER_PRIVATE_KEY to your funded testnet key
+npm run provision         # generate agent wallets, fund them, register roles, deposit into Gateway
+npm run demo              # drive the full adversarial loop against Arc testnet
+```
+
+`npm run provision` is idempotent: it writes `.wallets.json` (gitignored), tops up only what is below its floor, and fails loudly with the wallet named if anything is short.
+
+`npm run demo` starts every component — merchant source, publisher agents, fraud agent, verifier, settlement, advertiser agent — and drives the loop to at least 50 on-chain settlements. It is an acceptance gate, not a screensaver: it exits non-zero unless the settlements land, every recognized payout has a matching payment, at least one claim is rejected, at least one duplicate is reverted on-chain, the advertiser agent reallocates budget autonomously, the fraud agent is paid nothing, and escrow accounting reconciles against the payment stream.
+
+One operational note: conversion ids are deterministic and nullifiers are consumed on submission, so each run needs an unused `campaign.name` in `demo.config.json`.
+
+Watch it live:
+
+```bash
+cd dashboard && npm install && npm run dev   # http://localhost:4700
+```
+
+The dashboard reads live chain state for the campaign named in `demo.config.json`, alongside the payment and fraud evidence the last run wrote.
+
+Tests:
+
+```bash
+npm test                    # canonical hashing, verifier rules, reallocation policy, dashboard parsers
+cd contracts && forge test  # escrow accounting, dispute window, duplicate refusal, invariants
+```
+
+## What a run proves
+
+A clean rehearsal on campaign `poc-demo-6` (Arc testnet, from block `53444250`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
+
+| | |
+|---|---|
+| Conversions settled and paid | 50 — one payment each, 50 distinct Gateway references |
+| Recognized in escrow | 5,000,000 atomic USDC, exactly equal to the sum of payments |
+| Fabricated claims rejected on-chain | 13 |
+| Duplicate claims refused by the contract | 24 reverted transactions |
+| Autonomous budget reallocations | 1 — away from the fraud agent, reason `QUALITY_DIVERGENCE` |
+| Paid to the fraud agent | 0 |
+
+All 13 rejections and all 24 reverts belong to the fraud agent; no honest publisher claim was refused.
+
+Every number is chain state: the events, the verdicts, the refusals, and the reallocation can be read back from the contracts above without trusting this file.
 
 ## Status
 
-Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), Agentic Economy track. The build lands in this repository during the hackathon window (July–August 2026); this README precedes the code. Run instructions will arrive with the components they run.
+Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), Agentic Economy track. The full loop described here runs end to end on Arc testnet today. What remains is presentation — a deployed dashboard and the demo video — not missing machinery.
 
 ## Roadmap
 
