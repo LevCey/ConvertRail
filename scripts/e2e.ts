@@ -12,6 +12,7 @@ import {
   loadDemoConfig,
   loadWallets,
   publicClient,
+  REJECT_REASON,
 } from "@convertrail/shared";
 
 const TARGET_SETTLED = Number(process.env.E2E_TARGET_SETTLED ?? 20);
@@ -93,13 +94,19 @@ interface Summary {
   reallocations: number;
   duplicateReverts: number;
   payments: number;
+  /** Rejections by on-chain reason code, so the gate can prove each
+   * deterministic rule actually fired rather than just counting refusals. */
+  rejectReasons: Record<number, number>;
 }
 
 // Incremental, rate-limit-resilient collection: only the un-scanned block
 // tail is queried each cycle, and the cursor advances only after a fully
 // successful scan — so a throttled cycle drops nothing, it just retries the
 // same (small) range next time. Counts are cumulative accumulators.
-const acc = { settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0 };
+const acc = {
+  settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0,
+  rejectReasons: {} as Record<number, number>,
+};
 let collectedThrough = startBlock - 1n;
 
 async function collect(): Promise<Summary> {
@@ -131,7 +138,12 @@ async function collect(): Promise<Summary> {
     acc.fraudSettled += settledThis.filter(
       (l) => (l.args as { publisher: string }).publisher.toLowerCase() === fraudAddress,
     ).length;
-    acc.rejected += rejectedLogs.filter(inCampaign).length;
+    const rejectedThis = rejectedLogs.filter(inCampaign);
+    acc.rejected += rejectedThis.length;
+    for (const log of rejectedThis) {
+      const reason = Number((log.args as { reason: number }).reason);
+      acc.rejectReasons[reason] = (acc.rejectReasons[reason] ?? 0) + 1;
+    }
     acc.disputed += disputedLogs.filter(inCampaign).length;
     acc.reallocations += reallocLogs.filter(inCampaign).length;
     collectedThrough = current; // advance only after all four queries succeeded
@@ -152,6 +164,7 @@ async function collect(): Promise<Summary> {
     reallocations: acc.reallocations,
     duplicateReverts: fraudLog.filter((e) => e.type === "duplicate" && e.status === "reverted").length,
     payments,
+    rejectReasons: { ...acc.rejectReasons },
   };
 }
 
@@ -232,7 +245,12 @@ async function reconcileWithRetry(): Promise<string[]> {
 }
 
 const started = Date.now();
-let summary: Summary = { settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0, duplicateReverts: 0, payments: 0 };
+let summary: Summary = {
+  settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0,
+  duplicateReverts: 0, payments: 0, rejectReasons: {},
+};
+
+const ruleFired = (reason: number): boolean => (summary.rejectReasons[reason] ?? 0) > 0;
 
 while (Date.now() - started < DEADLINE_MS) {
   await new Promise((r) => setTimeout(r, 10_000));
@@ -241,12 +259,15 @@ while (Date.now() - started < DEADLINE_MS) {
     return summary;
   });
   console.log(
-    `[e2e] settled=${summary.settled}/${TARGET_SETTLED} paid=${summary.payments} rejected=${summary.rejected} dupReverts=${summary.duplicateReverts} realloc=${summary.reallocations} fraudSettled=${summary.fraudSettled}`,
+    `[e2e] settled=${summary.settled}/${TARGET_SETTLED} paid=${summary.payments} rejected=${summary.rejected}` +
+      ` (evidence=${summary.rejectReasons[REJECT_REASON.EVIDENCE_MISMATCH] ?? 0} timing=${summary.rejectReasons[REJECT_REASON.TIMING_ANOMALY] ?? 0})` +
+      ` dupReverts=${summary.duplicateReverts} realloc=${summary.reallocations} fraudSettled=${summary.fraudSettled}`,
   );
   if (
     summary.settled >= TARGET_SETTLED &&
     summary.payments >= TARGET_SETTLED &&
-    summary.rejected >= 1 &&
+    ruleFired(REJECT_REASON.EVIDENCE_MISMATCH) &&
+    ruleFired(REJECT_REASON.TIMING_ANOMALY) &&
     summary.duplicateReverts >= 1 &&
     summary.reallocations >= 1
   ) {
@@ -281,7 +302,10 @@ summary = await collect().catch(() => summary);
 const failures: string[] = [];
 if (summary.settled < TARGET_SETTLED) failures.push(`settled ${summary.settled} < ${TARGET_SETTLED}`);
 if (summary.payments < summary.settled) failures.push(`payments ${summary.payments} < settled ${summary.settled}`);
-if (summary.rejected < 1) failures.push("no rejected claim");
+// Each deterministic rule must have refused something on-chain: a run where
+// only one of them fires does not demonstrate the verification layer it claims.
+if (!ruleFired(REJECT_REASON.EVIDENCE_MISMATCH)) failures.push("no fabricated-claim rejection (EVIDENCE_MISMATCH)");
+if (!ruleFired(REJECT_REASON.TIMING_ANOMALY)) failures.push("no bot-traffic rejection (TIMING_ANOMALY)");
 if (summary.duplicateReverts < 1) failures.push("no on-chain duplicate revert");
 if (summary.reallocations < 1) failures.push("no autonomous reallocation");
 if (summary.fraudSettled > 0) failures.push(`fraud publisher got ${summary.fraudSettled} settlements`);

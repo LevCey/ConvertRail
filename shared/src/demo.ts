@@ -19,7 +19,14 @@ export interface DemoConfig {
     caps: Record<string, string>;
   };
   publishers: { id: string; eventIntervalMs: number }[];
-  fraud: { id: string; attackIntervalMs: number };
+  fraud: {
+    id: string;
+    attackIntervalMs: number;
+    /** Synthetic traffic the fraud publisher drives: real events in the
+     * merchant's records, but converting impossibly soon after the click —
+     * the pattern the timing rule exists to catch. */
+    botTraffic?: { eventIntervalMs: number; clickToConversionMs: number };
+  };
   verification: VerificationPolicy;
   reallocation: {
     windowSize: number;

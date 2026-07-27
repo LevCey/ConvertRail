@@ -1,9 +1,13 @@
-// Fraud agent — the demo's scripted antagonist. Two attack classes:
-//   duplicate:  replays the nullifier of a conversion the clean publisher
-//               already claimed — refused by the contract itself (real
-//               on-chain revert, visible in the explorer)
-//   fabricated: submits a fresh nullifier with an evidence hash matching no
-//               signed merchant event — rejected by the verifier on-chain
+// Fraud agent — the demo's scripted antagonist. Three attack classes, one per
+// deterministic rule the verification layer enforces:
+//   duplicate:   replays the nullifier of a conversion the clean publisher
+//                already claimed — refused by the contract itself (real
+//                on-chain revert, visible in the explorer)
+//   fabricated:  submits a fresh nullifier with an evidence hash matching no
+//                signed merchant event — rejected as EVIDENCE_MISMATCH
+//   bot traffic: claims its own synthetic conversions, which are genuine
+//                merchant events but convert impossibly soon after the click
+//                — rejected as TIMING_ANOMALY
 // Attack mix and rate are deterministic script parameters (reproducible takes).
 import { appendFileSync, mkdirSync } from "node:fs";
 import { encodeFunctionData, keccak256, stringToBytes } from "viem";
@@ -109,6 +113,51 @@ async function fabricatedAttack(): Promise<void> {
   console.log(`fabricated attack ${fakeId}: submitted tx=${hash.slice(0, 14)}...`);
 }
 
+/** Bot-traffic attack: the evidence is a real signed merchant event, so it
+ * survives hash validation and the publisher binding — the timing rule is what
+ * refuses it. Each event is claimed at most once; the registry would revert a
+ * repeat as a duplicate, which is a different attack. */
+let botSinceSeq = 0;
+
+async function botTrafficAttack(): Promise<void> {
+  if (!config.fraud.botTraffic) return;
+  const res = await fetch(
+    `${merchantBase}/events?publisherId=${config.fraud.id}&sinceSeq=${botSinceSeq}`,
+  );
+  if (!res.ok) return;
+  const body = (await res.json()) as { events: { seq: number; event: SignedConversionEvent }[] };
+  const next = body.events[0];
+  if (!next) return;
+  botSinceSeq = Math.max(botSinceSeq, next.seq);
+
+  const botNullifier = nullifier(campaignId, next.event.conversionId);
+  const botEvidenceHash = evidenceHash(next.event);
+  const hash = await wallet.writeContract({
+    address: env.conversionRegistry,
+    abi: conversionRegistryAbi,
+    functionName: "submitClaim",
+    args: [campaignId, botNullifier, botEvidenceHash],
+  });
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  appendFileSync(
+    FRAUD_LOG,
+    JSON.stringify({
+      type: "bot_traffic",
+      campaignId,
+      campaignName: config.campaign.name,
+      publisher: fraudPublisher,
+      nullifier: botNullifier,
+      evidenceHash: botEvidenceHash,
+      txHash: hash,
+      status: receipt.status,
+      conversionId: next.event.conversionId,
+    }) + "\n",
+  );
+  console.log(
+    `bot-traffic attack ${next.event.conversionId} (${next.event.conversionTs - next.event.clickTs}ms click-to-conversion): submitted tx=${hash.slice(0, 14)}...`,
+  );
+}
+
 let turn = 0;
 console.log(`fraud agent ${config.fraud.id} (${fraudPublisher}) attacking every ${config.fraud.attackIntervalMs}ms`);
 
@@ -117,9 +166,11 @@ setInterval(async () => {
   if (ticking) return;
   ticking = true;
   try {
-    // Deterministic alternation: fabricated, duplicate, fabricated, ...
-    if (turn++ % 2 === 0) await fabricatedAttack();
-    else await duplicateAttack();
+    // Deterministic rotation: fabricated, duplicate, bot traffic, repeat.
+    const which = turn++ % 3;
+    if (which === 0) await fabricatedAttack();
+    else if (which === 1) await duplicateAttack();
+    else await botTrafficAttack();
   } catch (err) {
     console.error("fraud loop error:", (err as Error).message.split("\n")[0]);
   } finally {

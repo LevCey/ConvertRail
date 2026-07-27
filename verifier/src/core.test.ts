@@ -111,6 +111,23 @@ test("rejects burst floods over the rate window", () => {
   });
 });
 
+test("rejects bot traffic: the fraud publisher's own event, converting too fast", () => {
+  // The demo's third attack class. Evidence is a genuine signed merchant event
+  // bound to the claimant, so hash and binding both pass — timing is the only
+  // rule standing between synthetic traffic and a payout.
+  const event = makeEvent({ publisherId: "pub-x", clickTs: 14_700, conversionTs: 15_000 });
+  const claim: ClaimInput = {
+    campaignId: CAMPAIGN,
+    publisher: PUB_X,
+    nullifier: nullifier(CAMPAIGN, event.conversionId),
+    evidenceHash: evidenceHash(event),
+  };
+  deepStrictEqual(decide(claim, event, { ...binding, "pub-x": PUB_X }, policy, []), {
+    approved: false,
+    reason: "TIMING_ANOMALY",
+  });
+});
+
 test("determinism: replaying identical inputs yields identical verdicts", () => {
   const event = makeEvent();
   const claim = makeClaim(event);

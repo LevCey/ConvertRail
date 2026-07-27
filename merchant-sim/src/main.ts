@@ -41,9 +41,10 @@ const byHash = new Map<string, SignedConversionEvent>();
 let seq = 0;
 let conversionCounter = 0;
 
-async function emitEvent(publisherId: string): Promise<void> {
+async function emitEvent(publisherId: string, fixedClickDeltaMs?: number): Promise<void> {
   const now = Date.now();
   const clickDelta =
+    fixedClickDeltaMs ??
     config.verification.minClickToConversionMs + Math.floor(rand() * config.merchantSim.clickJitterMaxMs);
   const body = {
     campaignId,
@@ -63,6 +64,14 @@ async function emitEvent(publisherId: string): Promise<void> {
 
 for (const publisher of config.publishers) {
   setInterval(() => void emitEvent(publisher.id), publisher.eventIntervalMs);
+}
+
+// The fraud publisher drives traffic too, and it lands in the merchant's
+// records like anyone else's — it is simply synthetic, converting far too
+// soon after the click for a human to have been involved.
+const bot = config.fraud.botTraffic;
+if (bot) {
+  setInterval(() => void emitEvent(config.fraud.id, bot.clickToConversionMs), bot.eventIntervalMs);
 }
 
 const server = createServer((req, res) => {

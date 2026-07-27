@@ -17,7 +17,11 @@
   ],
   "fraud": {
     "id": "pub-x",
-    "attackIntervalMs": 5000
+    "attackIntervalMs": 5000,
+    "botTraffic": {
+      "eventIntervalMs": 9000,
+      "clickToConversionMs": 300
+    }
   },
   "verification": {
     "minClickToConversionMs": 1500,
