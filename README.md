@@ -84,13 +84,15 @@ The verifier in this MVP is a service applying published deterministic rules, wi
 
 | Tool | How ConvertRail uses it | Status |
 |---|---|---|
-| **Nanopayments** | The headline mechanic. Every verified conversion is paid on its own — instant, gas-free, full amount, no threshold. The settlement module signs one EIP-3009 authorization per conversion and settles it through the Gateway facilitator (`@circle-fin/x402-batching`) — a median round trip of 477 ms across the 50 payments of the reference run. | Integrated |
-| **Gateway** | The layer underneath Nanopayments: the operational wallet holds a USDC balance in Gateway, each authorization is verified off-chain in a few hundred milliseconds, and settlement lands on-chain in batches. | Integrated |
+| **Nanopayments** | The headline mechanic. Every verified conversion is paid on its own — instant, gas-free, full amount, no threshold. The settlement module signs one EIP-3009 authorization per conversion and settles it through the Gateway facilitator (`@circle-fin/x402-batching`) — a median round trip of 952 ms across the 50 payments of the reference run. | Integrated |
+| **Gateway** | The layer underneath Nanopayments: the paying wallet holds a USDC balance in Gateway, each authorization is verified off-chain in a few hundred milliseconds, and settlement lands on-chain in batches. | Integrated |
+| **Circle Wallets** | The wallet that pays publishers is a Circle developer-controlled wallet. It signs every per-conversion authorization through Circle's signing API; the private key is never in this repository. Arc is not one of Circle's managed chains, so the wallet is created on the virtual EVM-TESTNET chain and Circle signs while this repository broadcasts. It is an EOA by requirement — Gateway verifies EIP-3009 by ECDSA recovery — and it never sends a transaction of its own, because provisioning credits its Gateway balance with `depositFor`. | Integrated |
 | **USDC on Arc** | The entire economy of the demo. Campaign budgets, escrow accounting, publisher payouts, and gas are all denominated in USDC. | Integrated |
 | Paymaster | Not applicable here. Paymaster exists to pay gas in USDC on chains where gas is something else; on Arc gas already *is* USDC, so `CampaignEscrow` provisions publisher gas directly at campaign creation. | Not applicable |
-| Circle Wallets | Not used. Each agent holds an isolated keypair generated locally by `npm run provision`, which is what the demo's key isolation needs. Custodial key management is a production concern, and Circle Wallets is the answer we would reach for there — but claiming it today would mean claiming code that isn't in this repository. | Not used |
 | Circle Contracts | Not used. The three contracts are hand-written Solidity, deployed with Foundry and source-verified on the explorer; the escrow's cap, dispute-window, and refusal logic is specific enough that a template deployment would not carry it. | Not used |
 | CCTP / StableFX | Cross-chain and cross-border publisher payouts. | Roadmap |
+
+Signing through Circle costs a network round trip: the same loop signed by a local key pays in a median of 524 ms rather than 952 ms. Both are instant next to the net-30 terms this replaces, and `CIRCLE_WALLET_ID` selects between them without a code change.
 
 ## Deployed on Arc testnet
 
@@ -134,8 +136,8 @@ The dashboard is a plain Next.js app with no database. Where there is no local r
 One setting matters. The dashboard scans from the campaign's first block to the chain head, which is right during a live run and wrong for a finished one — the head keeps moving, so each request scans a widening stretch of empty blocks. Bound it when deploying a completed campaign:
 
 ```bash
-CAMPAIGN_FROM_BLOCK=53444250
-CAMPAIGN_TO_BLOCK=53445250
+CAMPAIGN_FROM_BLOCK=53979589
+CAMPAIGN_TO_BLOCK=53980400
 ```
 
 Full list of settings and their defaults: `dashboard/.env.example`.
@@ -149,18 +151,20 @@ cd contracts && forge test  # escrow accounting, dispute window, duplicate refus
 
 ## What a run proves
 
-A clean rehearsal on campaign `poc-demo-6` (Arc testnet, from block `53444250`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
+A clean rehearsal on campaign `poc-demo-8` (Arc testnet, from block `53979589`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
 
 | | |
 |---|---|
 | Conversions settled and paid | 50 — one payment each, 50 distinct Gateway references |
 | Recognized in escrow | 5,000,000 atomic USDC, exactly equal to the sum of payments |
-| Fabricated claims rejected on-chain | 13 |
-| Duplicate claims refused by the contract | 24 reverted transactions |
+| Median per-conversion payment | 952 ms, signed by the Circle wallet |
+| Fabricated claims refused on evidence | 9 |
+| Bot traffic refused on timing | 9 |
+| Duplicate claims refused by the contract | 16 reverted transactions |
 | Autonomous budget reallocations | 1 — away from the fraud agent, reason `QUALITY_DIVERGENCE` |
 | Paid to the fraud agent | 0 |
 
-All 13 rejections and all 24 reverts belong to the fraud agent; no honest publisher claim was refused.
+Every refusal belongs to the fraud agent; no honest publisher claim was refused. The three deterministic checks each refused something in this run: the contract itself reverted the duplicates, evidence-hash validation caught the fabricated claims, and the timing rule caught conversions arriving 300 ms after their click — traffic no human generates.
 
 Every number is chain state: the events, the verdicts, the refusals, and the reallocation can be read back from the contracts above without trusting this file.
 

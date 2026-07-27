@@ -88,6 +88,15 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // Identifies which campaign this process is emitting for. A harness can
+  // then tell its own merchant source apart from someone else's holding the
+  // port — otherwise agents happily claim a foreign campaign's conversions
+  // and every claim is refused for evidence that never belonged to it.
+  if (url.pathname === "/health") {
+    res.end(JSON.stringify({ campaignId, campaignName: config.campaign.name, events: events.length }));
+    return;
+  }
+
   const byHashMatch = url.pathname.match(/^\/event-by-hash\/(0x[0-9a-fA-F]{64})$/);
   if (byHashMatch) {
     const event = byHash.get(byHashMatch[1]);
@@ -102,6 +111,17 @@ const server = createServer((req, res) => {
 
   res.statusCode = 404;
   res.end(JSON.stringify({ error: "not found" }));
+});
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `merchant-sim cannot start: port ${config.merchantSim.port} is already in use. ` +
+        "Something else is serving conversion events — stop it before running the demo.",
+    );
+    process.exit(1);
+  }
+  throw err;
 });
 
 server.listen(config.merchantSim.port, () => {

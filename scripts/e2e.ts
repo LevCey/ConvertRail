@@ -44,10 +44,26 @@ function shutdown(): void {
   for (const child of children) child.kill("SIGTERM");
 }
 
+/** Thrown by a readiness check that has established the condition can never
+ * be met — waiting longer would only delay the same failure. Ordinary errors
+ * mean "not yet" (a contract read reverts until the campaign exists, a fetch
+ * fails until the port is up) and are retried until the timeout. */
+class Unmeetable extends Error {}
+
 async function waitFor(label: string, check: () => Promise<boolean>, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (await check().catch(() => false)) return;
+    let ready = false;
+    try {
+      ready = await check();
+    } catch (err) {
+      if (err instanceof Unmeetable) {
+        shutdown();
+        throw new Error(`e2e: ${label} — ${err.message}`);
+      }
+      ready = false; // not ready yet; keep waiting
+    }
+    if (ready) return;
     await new Promise((r) => setTimeout(r, 2_000));
   }
   shutdown();
@@ -62,9 +78,21 @@ writeFileSync(
 console.log(`[e2e] starting from block ${startBlock}, target ${TARGET_SETTLED} settled claims`);
 
 run("merchant", ["merchant-sim/src/main.ts"]);
-await waitFor("merchant-sim port", async () => {
-  const res = await fetch(`http://localhost:${config.merchantSim.port}/events?sinceSeq=0`);
-  return res.ok;
+// Insist the merchant source on that port is *this* run's. A leftover process
+// from an earlier run answers happily and serves another campaign's events,
+// which produces a full run of claims refused for evidence that was never
+// theirs — a failure that looks like a broken verifier and is not one.
+await waitFor("merchant-sim serving this campaign", async () => {
+  // Still starting up is not an error; answering for the wrong campaign is.
+  const res = await fetch(`http://localhost:${config.merchantSim.port}/health`).catch(() => null);
+  if (!res?.ok) return false;
+  const health = (await res.json()) as { campaignId?: string; campaignName?: string };
+  if (health.campaignId === campaignId) return true;
+  throw new Unmeetable(
+    `port ${config.merchantSim.port} is held by a merchant source for campaign ` +
+      `"${health.campaignName ?? "unknown"}" (${health.campaignId}), not "${config.campaign.name}" ` +
+      `(${campaignId}). Stop that process and re-run.`,
+  );
 }, 30_000);
 
 run("advertiser", ["agents/src/advertiser.ts"]);

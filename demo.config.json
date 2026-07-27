@@ -1,6 +1,6 @@
 {
   "campaign": {
-    "name": "poc-demo-6",
+    "name": "poc-demo-8",
     "pricePerConversion": "100000",
     "budget": "10000000",
     "disputeWindowBlocks": 8,
@@ -12,8 +12,14 @@
     }
   },
   "publishers": [
-    { "id": "pub-a", "eventIntervalMs": 2500 },
-    { "id": "pub-b", "eventIntervalMs": 4000 }
+    {
+      "id": "pub-a",
+      "eventIntervalMs": 2500
+    },
+    {
+      "id": "pub-b",
+      "eventIntervalMs": 4000
+    }
   ],
   "fraud": {
     "id": "pub-x",
