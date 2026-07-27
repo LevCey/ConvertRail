@@ -52,6 +52,22 @@ const gatewayWalletAbi = [
     ],
     outputs: [],
   },
+  {
+    // Credits someone else's Gateway balance. This is what lets a Circle
+    // developer-controlled wallet pay publishers without ever sending a
+    // transaction itself: the local operational wallet funds the balance,
+    // the Circle wallet only signs authorizations against it. Necessary
+    // because Arc is not a Circle-managed chain — Circle signs, we broadcast.
+    type: "function",
+    name: "depositFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "depositor", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [],
+  },
 ] as const;
 
 interface WalletEntry {
@@ -249,6 +265,14 @@ async function ensureRole(name: WalletName, address: Address, role: number): Pro
   });
 }
 
+/** Whoever signs the payment authorisations is who needs the Gateway balance:
+ * the Circle wallet when one is configured, the local operational wallet
+ * otherwise. */
+function payerAddress(operational: WalletEntry): Address {
+  const circle = process.env.CIRCLE_WALLET_ADDRESS as Address | undefined;
+  return process.env.CIRCLE_WALLET_ID && circle ? circle : operational.address;
+}
+
 async function readGatewayAvailable(operational: WalletEntry): Promise<bigint> {
   const gateway = new GatewayClient({
     chain: "arcTestnet",
@@ -257,7 +281,8 @@ async function readGatewayAvailable(operational: WalletEntry): Promise<bigint> {
   });
   // getBalance() is the Gateway API-only read. getBalances() also performs an
   // Arc RPC wallet read, which makes a balance assertion needlessly throttle-prone.
-  return withRetry("gateway getBalance", async () => (await gateway.getBalance()).available as bigint);
+  const target = payerAddress(operational);
+  return withRetry("gateway getBalance", async () => (await gateway.getBalance(target)).available as bigint);
 }
 
 async function ensureGatewayDeposit(operational: WalletEntry, initialAvailable: bigint): Promise<bigint> {
@@ -265,13 +290,14 @@ async function ensureGatewayDeposit(operational: WalletEntry, initialAvailable: 
   const readAvailable = () => readGatewayAvailable(operational);
   let available = initialAvailable;
   if (available >= GATEWAY_MIN_AVAILABLE) {
-    console.log(`gateway available: ${formatUnits(available, 6)} (ok)`);
+    console.log(`gateway available for ${payerAddress(operational)}: ${formatUnits(available, 6)} (ok)`);
     return available;
   }
   const requiredDeposit = GATEWAY_MIN_AVAILABLE - available;
   const depositAmount = formatUnits(requiredDeposit, 6);
   console.log(
-    `gateway available ${formatUnits(available, 6)} below ${formatUnits(GATEWAY_MIN_AVAILABLE, 6)} target, ` +
+    `gateway available for ${payerAddress(operational)} is ${formatUnits(available, 6)}, ` +
+      `below ${formatUnits(GATEWAY_MIN_AVAILABLE, 6)} target, ` +
       `depositing ${depositAmount} USDC...`,
   );
 
@@ -306,14 +332,24 @@ async function ensureGatewayDeposit(operational: WalletEntry, initialAvailable: 
   const target = GATEWAY_MIN_AVAILABLE;
   for (let attempt = 1; attempt <= 8; attempt++) {
     try {
+      const beneficiary = payerAddress(operational);
+      const creditsSelf = beneficiary.toLowerCase() === operational.address.toLowerCase();
       const depositTxHash = await withRetry("gateway deposit send", () =>
-        operationalClient.writeContract({
-          address: env.gatewayWallet,
-          abi: gatewayWalletAbi,
-          functionName: "deposit",
-          args: [env.usdc, requiredDeposit],
-          gas: 120_000n,
-        }),
+        creditsSelf
+          ? operationalClient.writeContract({
+              address: env.gatewayWallet,
+              abi: gatewayWalletAbi,
+              functionName: "deposit",
+              args: [env.usdc, requiredDeposit],
+              gas: 120_000n,
+            })
+          : operationalClient.writeContract({
+              address: env.gatewayWallet,
+              abi: gatewayWalletAbi,
+              functionName: "depositFor",
+              args: [env.usdc, beneficiary, requiredDeposit],
+              gas: 150_000n,
+            }),
       );
       const receipt = await withRetry("gateway deposit receipt", () =>
         pub.waitForTransactionReceipt({ hash: depositTxHash }),

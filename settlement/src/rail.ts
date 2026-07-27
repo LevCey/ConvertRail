@@ -7,6 +7,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { BatchEvmScheme } from "@circle-fin/x402-batching/client";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import type { ChainEnv } from "@convertrail/shared";
+import { CircleWalletSigner } from "./circle-signer.ts";
 
 export interface PaymentResult {
   ref: string; // Gateway settlement reference (UUID, not a chain tx hash)
@@ -21,9 +22,21 @@ export class NanopaymentsRail implements SettlementRail {
   private readonly scheme: BatchEvmScheme;
   private readonly facilitator: BatchFacilitatorClient;
   private readonly env: ChainEnv;
+  /** Which key signed the authorizations — reported once at startup so a run's
+   * logs say plainly whether payments were signed locally or by Circle. */
+  readonly signerKind: "circle-wallet" | "local-key";
+  readonly payerAddress: Address;
 
   constructor(operationalKey: Hex, env: ChainEnv) {
-    this.scheme = new BatchEvmScheme(privateKeyToAccount(operationalKey));
+    // A Circle developer-controlled wallet holds the operational funds when one
+    // is configured; otherwise the local key does. Both satisfy the same
+    // `{address, signTypedData}` contract Nanopayments signs through, so the
+    // switch is one line of configuration and reversible at any moment.
+    const circle = CircleWalletSigner.fromEnv();
+    const signer = circle ? new CircleWalletSigner(circle) : privateKeyToAccount(operationalKey);
+    this.signerKind = circle ? "circle-wallet" : "local-key";
+    this.payerAddress = signer.address;
+    this.scheme = new BatchEvmScheme(signer);
     // The v3 SDK defaults to the mainnet API; the testnet URL must be
     // explicit or verification fails with unsupported_network.
     this.facilitator = new BatchFacilitatorClient({ url: env.gatewayApiUrl });

@@ -145,6 +145,7 @@ console.log(
     (pending.size > 0 ? ` (${pending.size} unpaid/verified claims recovered)` : "") +
     (maxRecognized === undefined ? "" : ` (recognition cap ${maxRecognized})`),
 );
+console.log(`paying from ${rail.payerAddress} signed by ${rail.signerKind}`);
 
 async function collectVerified(current: bigint): Promise<void> {
   const logs = await pub.getContractEvents({
