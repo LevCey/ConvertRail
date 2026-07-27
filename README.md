@@ -127,6 +127,19 @@ cd dashboard && npm install && npm run dev   # http://localhost:4700
 
 The dashboard reads live chain state for the campaign named in `demo.config.json`, alongside the payment and fraud evidence the last run wrote.
 
+### Deploying it
+
+The dashboard is a plain Next.js app with no database. Where there is no local run to read, it falls back to the reference run committed under `dashboard/reference-run/`, so a deployed build shows the same evidence. Those records are never taken on trust: a payment appears only when it matches its `PayoutRecognized` event on claim, publisher, amount and transaction hash, and a duplicate refusal appears only after its transaction is re-fetched from Arc and confirmed reverted.
+
+One setting matters. The dashboard scans from the campaign's first block to the chain head, which is right during a live run and wrong for a finished one — the head keeps moving, so each request scans a widening stretch of empty blocks. Bound it when deploying a completed campaign:
+
+```bash
+CAMPAIGN_FROM_BLOCK=53444250
+CAMPAIGN_TO_BLOCK=53445250
+```
+
+Full list of settings and their defaults: `dashboard/.env.example`.
+
 Tests:
 
 ```bash

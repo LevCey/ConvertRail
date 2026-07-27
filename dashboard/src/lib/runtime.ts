@@ -158,6 +158,11 @@ async function runtimeLog(name: string, override?: string): Promise<string> {
     process.env.CONVERTRAIL_RUNTIME_DIR ? resolve(process.env.CONVERTRAIL_RUNTIME_DIR, name) : undefined,
     resolve(process.cwd(), ".e2e", name),
     resolve(process.cwd(), "..", ".e2e", name),
+    // Deployed builds have no local run directory. The committed reference
+    // run stands in — safely, because nothing here is taken on trust: every
+    // payment is matched against its PayoutRecognized event and every
+    // duplicate is re-fetched from chain before it can appear.
+    resolve(process.cwd(), "reference-run", name),
   ].filter((p): p is string => !!p);
 
   for (const path of [...new Set(candidates)]) {
