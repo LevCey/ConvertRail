@@ -6,6 +6,8 @@
 
 A neutral settlement rail for performance marketing, built on [Arc](https://www.arc.io/). Every conversion claim is checked by deterministic rules, fraud is refused on-chain in real time, and verified conversions are paid to publishers instantly in USDC — full amount, per conversion, no payout thresholds. From net-30 to one second.
 
+**[convertrail.xyz](https://convertrail.xyz)** · **[live dashboard](https://demo.convertrail.xyz)** — the reference run, every row re-derived from Arc · **[docs](https://docs.convertrail.xyz)**
+
 ## The problem
 
 Performance marketing is a structurally adversarial market. Advertisers and publishers transact billions annually under mutual distrust:
@@ -131,7 +133,7 @@ The dashboard reads live chain state for the campaign named in `demo.config.json
 
 ### Deploying it
 
-The dashboard is a plain Next.js app with no database. Where there is no local run to read, it falls back to the reference run committed under `dashboard/reference-run/`, so a deployed build shows the same evidence. Those records are never taken on trust: a payment appears only when it matches its `PayoutRecognized` event on claim, publisher, amount and transaction hash, and a duplicate refusal appears only after its transaction is re-fetched from Arc and confirmed reverted.
+[demo.convertrail.xyz](https://demo.convertrail.xyz) is this, deployed. The dashboard is a plain Next.js app with no database. Where there is no local run to read, it falls back to the reference run committed under `dashboard/reference-run/`, so a deployed build shows the same evidence. Those records are never taken on trust: a payment appears only when it matches its `PayoutRecognized` event on claim, publisher, amount and transaction hash, and a duplicate refusal appears only after its transaction is re-fetched from Arc and confirmed reverted.
 
 One setting matters. The dashboard scans from the campaign's first block to the chain head, which is right during a live run and wrong for a finished one — the head keeps moving, so each request scans a widening stretch of empty blocks. Bound it when deploying a completed campaign:
 
@@ -170,7 +172,7 @@ Every number is chain state: the events, the verdicts, the refusals, and the rea
 
 ## Status
 
-Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), Agentic Economy track. The full loop described here runs end to end on Arc testnet today. What remains is presentation — a deployed dashboard and the demo video — not missing machinery.
+Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), Agentic Economy track. The full loop described here runs end to end on Arc testnet today, and the [dashboard](https://demo.convertrail.xyz) is deployed with the reference run in it. What remains is the demo video, not missing machinery.
 
 ## Roadmap
 
