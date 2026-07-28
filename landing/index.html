@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConvertRail — the neutral settlement rail for performance marketing</title>
+<meta name="description" content="Every conversion verified, fraud refused on-chain in real time, publishers paid per conversion in USDC on Arc. From net-30 to per-conversion settlement.">
+<meta property="og:title" content="ConvertRail">
+<meta property="og:description" content="The neutral settlement rail for performance marketing. Conversions verified, fraud refused on-chain, publishers paid per conversion in USDC.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://convertrail.xyz/">
+<meta property="og:image" content="https://convertrail.xyz/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/mark.png">
+<style>
+  :root{
+    --bg:#0a0e17; --panel:#0f1523; --panel2:#0d1220; --border:#1e2a44;
+    --text:#e6edf7; --muted:#8595b0; --accent:#2fe6d6; --blue:#2775ca;
+    --danger:#ff5c72; --warn:#ffb454;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:var(--mono);font-size:15px;line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+  /* ---- nav ---- */
+  nav{
+    position:sticky;top:0;z-index:10;background:rgba(10,14,23,.88);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--border);
+  }
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700}
+  .brand img{width:26px;height:26px;border-radius:5px}
+  .brand span{color:var(--accent)}
+  nav .links{display:flex;gap:22px;font-size:13.5px;color:var(--muted);flex-wrap:wrap}
+  nav .links a{color:var(--muted)}
+  nav .links a:hover{color:var(--text);text-decoration:none}
+
+  /* ---- hero ---- */
+  header{padding:84px 0 64px;border-bottom:1px solid var(--border)}
+  .eyebrow{color:var(--accent);font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin-bottom:20px}
+  h1{
+    font-size:clamp(30px,5vw,46px);line-height:1.15;margin:0 0 22px;
+    font-weight:700;letter-spacing:-.01em;max-width:24ch;
+  }
+  .lede{font-size:17px;color:var(--muted);max-width:64ch;margin:0 0 30px}
+  .lede b{color:var(--text);font-weight:600}
+  .cta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:44px}
+  .btn{
+    display:inline-block;padding:11px 20px;border-radius:8px;font-size:14px;
+    border:1px solid var(--border);color:var(--text);background:var(--panel);
+  }
+  .btn:hover{border-color:var(--accent);text-decoration:none}
+  .btn.primary{background:var(--accent);color:#04121a;border-color:var(--accent);font-weight:700}
+  .btn.primary:hover{filter:brightness(1.08)}
+
+  .proof{display:flex;gap:0;flex-wrap:wrap;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--panel)}
+  .proof div{flex:1 1 150px;padding:16px 20px;border-right:1px solid var(--border)}
+  .proof div:last-child{border-right:none}
+  .proof .n{font-size:22px;font-weight:700;color:var(--accent)}
+  .proof .n.zero{color:var(--text)}
+  .proof .l{font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:3px}
+
+  /* ---- sections ---- */
+  section{padding:66px 0;border-bottom:1px solid var(--border)}
+  h2{font-size:23px;margin:0 0 10px;font-weight:700;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 32px;max-width:70ch}
+  .grid{display:grid;gap:16px}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(258px,1fr))}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:22px}
+  .card h3{margin:0 0 9px;font-size:15px;font-weight:700}
+  .card p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.6}
+  .tick{width:34px;height:3px;background:var(--accent);border-radius:2px;margin-bottom:14px}
+  .tick.b{background:var(--blue)}
+
+  ol.steps{list-style:none;counter-reset:s;padding:0;margin:0}
+  ol.steps li{counter-increment:s;display:flex;gap:16px;padding:15px 0;border-bottom:1px solid var(--border)}
+  ol.steps li:last-child{border-bottom:none}
+  ol.steps li::before{
+    content:"0" counter(s);color:var(--accent);font-weight:700;font-size:13px;flex:0 0 26px;padding-top:1px;
+  }
+  ol.steps b{display:block;margin-bottom:2px;font-size:14.5px}
+  ol.steps span{color:var(--muted);font-size:13.5px}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:400;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+  td.status{text-align:right;white-space:nowrap;font-size:12.5px}
+  .ok{color:var(--accent)} .na{color:var(--muted)} .rm{color:var(--blue)}
+
+  .quote{
+    border-left:2px solid var(--accent);padding:4px 0 4px 20px;margin:0;
+    font-size:17px;max-width:62ch;
+  }
+  .note{color:var(--muted);font-size:13px;margin-top:20px;max-width:74ch}
+
+  footer{padding:40px 0 56px;color:var(--muted);font-size:13px}
+  footer .row{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  footer code{color:var(--text);font-size:12px}
+  @media(max-width:640px){
+    header{padding:56px 0 44px} section{padding:48px 0}
+    .proof div{border-right:none;border-bottom:1px solid var(--border)}
+  }
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="brand" href="/"><img src="/mark.png" alt=""><span>Convert</span>Rail</a>
+  <div class="links">
+    <a href="#how">How it works</a>
+    <a href="#proof">Proof</a>
+    <a href="https://docs.convertrail.xyz">Docs</a>
+    <a href="https://demo.convertrail.xyz">Dashboard</a>
+    <a href="https://github.com/LevCey/ConvertRail">GitHub</a>
+  </div>
+</div></nav>
+
+<header><div class="wrap">
+  <div class="eyebrow">Built on Arc · USDC-native settlement</div>
+  <h1>The neutral settlement rail for performance marketing</h1>
+  <p class="lede">
+    Advertisers and publishers move billions under mutual distrust, on net-30 terms and
+    $50–500 payout thresholds. ConvertRail verifies every conversion by deterministic rules,
+    <b>refuses fraud on-chain in real time</b>, and pays publishers
+    <b>per conversion in USDC</b> — full amount, no threshold. The whole loop runs
+    agent-to-agent, with no humans in it.
+  </p>
+  <div class="cta">
+    <a class="btn primary" href="https://demo.convertrail.xyz">Open the live dashboard</a>
+    <a class="btn" href="https://docs.convertrail.xyz">Read the docs</a>
+    <a class="btn" href="https://github.com/LevCey/ConvertRail">Source</a>
+  </div>
+  <div class="proof">
+    <div><div class="n">50</div><div class="l">conversions settled and paid, one payment each</div></div>
+    <div><div class="n">34</div><div class="l">fraud attempts refused on-chain</div></div>
+    <div><div class="n zero">0</div><div class="l">paid to the fraud agent</div></div>
+    <div><div class="n">952 ms</div><div class="l">median per-conversion payment</div></div>
+  </div>
+</div></header>
+
+<section id="problem"><div class="wrap">
+  <h2>The market runs on mutual distrust</h2>
+  <p class="sub">Both sides operate on self-reported dashboards. Disputes are resolved by relationship power, not evidence.</p>
+  <div class="grid g3">
+    <div class="card"><div class="tick"></div>
+      <h3>Publishers can't verify advertisers</h3>
+      <p>Conversions happen inside the advertiser's systems. The party that reports the data is the party that pays, and underreporting has no neutral arbiter.</p>
+    </div>
+    <div class="card"><div class="tick b"></div>
+      <h3>Advertisers can't verify publishers</h3>
+      <p>Fake signups, duplicate conversions and bot traffic drain budgets. Detection today is retroactive, off-chain and opaque.</p>
+    </div>
+    <div class="card"><div class="tick"></div>
+      <h3>Settlement is slow and gated</h3>
+      <p>Net-30 terms and $50–500 payout thresholds persist because per-transaction settlement is expensive. Small publishers are structurally excluded.</p>
+    </div>
+  </div>
+  <p class="note">
+    Autonomous agents make this worse, not better: an agent's self-reported conversion deserves
+    less trust than a human's, and agents cannot operate on net-30 relationships. “How does an
+    autonomous agent get paid for verified work?” is the native question of the agent economy.
+  </p>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="sub">Six steps, all on Arc, all agent-to-agent. Every agent in the money path is deterministic by design — agents that move money need auditable logic, not improvisation.</p>
+  <ol class="steps">
+    <li><div><b>Fund</b><span>An advertiser agent funds a USDC escrow and publishes the campaign rules on-chain: price per conversion, budget, per-publisher caps, and the verification policy everyone is judged by.</span></div></li>
+    <li><div><b>Claim</b><span>Publisher agents submit conversion claims, each carrying a unique fingerprint and a hash of the signed conversion event.</span></div></li>
+    <li><div><b>Verify</b><span>Three deterministic checks gate every claim: duplicate detection, evidence-hash validation, and timing that has to look human.</span></div></li>
+    <li><div><b>Pay</b><span>A verified conversion is paid on its own — instant, gas-free, full amount, no threshold — through Circle Nanopayments.</span></div></li>
+    <li><div><b>Refuse</b><span>Fraudulent claims are refused by the contract itself, on-chain, and every attempt is recorded permanently with its evidence.</span></div></li>
+    <li><div><b>Reallocate</b><span>The advertiser agent watches verified-conversion quality per publisher and shifts budget away from bad traffic on its own, with the reason code on-chain.</span></div></li>
+  </ol>
+</div></section>
+
+<section id="proof"><div class="wrap">
+  <h2>What a run proves</h2>
+  <p class="sub">
+    A clean rehearsal on Arc testnet (campaign <code>poc-demo-8</code>, from block 53979589) completed with
+    no restart, no recovery step, no manual payment and no operator intervention. Every number below is
+    chain state — you can read it back from the deployed contracts, or watch it in the dashboard.
+  </p>
+  <div class="grid g2">
+    <div class="card">
+      <table>
+        <tr><td>Conversions settled and paid</td><td class="status ok">50</td></tr>
+        <tr><td>Recognized in escrow</td><td class="status">5,000,000 atomic USDC</td></tr>
+        <tr><td>Equal to the sum of payments</td><td class="status ok">to the atomic unit</td></tr>
+        <tr><td>Median per-conversion payment</td><td class="status">952 ms</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <table>
+        <tr><td>Fabricated claims refused on evidence</td><td class="status">9</td></tr>
+        <tr><td>Bot traffic refused on timing</td><td class="status">9</td></tr>
+        <tr><td>Duplicates reverted by the contract</td><td class="status">16</td></tr>
+        <tr><td>Autonomous reallocations</td><td class="status">1</td></tr>
+        <tr><td>Paid to the fraud agent</td><td class="status ok">0</td></tr>
+      </table>
+    </div>
+  </div>
+  <p class="note">
+    Every refusal belongs to the fraud agent; no honest publisher claim was refused. Each of the three
+    deterministic checks refused something in that run — the contract reverted the duplicates,
+    evidence-hash validation caught the fabricated claims, and the timing rule caught conversions
+    arriving 300 ms after their click, which is traffic no human generates.
+    <a href="https://demo.convertrail.xyz">See it in the dashboard →</a>
+  </p>
+</div></section>
+
+<section id="arc"><div class="wrap">
+  <h2>Why Arc</h2>
+  <p class="quote">Payout thresholds exist because settlement is expensive. Remove the cost of a payment and they have no reason to exist.</p>
+  <p class="note">
+    A $0.10 conversion cannot be paid individually on invoice rails, or on a general-purpose chain with
+    volatile gas. On Arc, gas <i>is</i> USDC and fees are predictable in dollars, and Nanopayments makes
+    each per-conversion payout instant and gas-free: authorizations are verified off-chain in
+    milliseconds and settlement lands on-chain in batches through Circle Gateway. The chain is the point
+    here, not a deployment target — this product is only economically viable on exactly this stack.
+  </p>
+  <div style="margin-top:30px">
+  <table>
+    <tr><th>Circle tool</th><th>How ConvertRail uses it</th><th style="text-align:right">Status</th></tr>
+    <tr><td>Nanopayments</td><td>One authorization per verified conversion, settled through the Gateway facilitator.</td><td class="status ok">Integrated</td></tr>
+    <tr><td>Gateway</td><td>The paying wallet's balance, off-chain verification, batched on-chain settlement.</td><td class="status ok">Integrated</td></tr>
+    <tr><td>Circle Wallets</td><td>The wallet that pays publishers is developer-controlled; it signs every authorization and its key is never in the repository.</td><td class="status ok">Integrated</td></tr>
+    <tr><td>USDC on Arc</td><td>Budgets, escrow accounting, publisher payouts and gas.</td><td class="status ok">Integrated</td></tr>
+    <tr><td>Paymaster</td><td>Not applicable: on Arc gas already is USDC, so the escrow provisions publisher gas directly.</td><td class="status na">N/A</td></tr>
+    <tr><td>Circle Contracts</td><td>Not used: the three contracts are hand-written Solidity, deployed with Foundry and source-verified.</td><td class="status na">Not used</td></tr>
+    <tr><td>CCTP / StableFX</td><td>Cross-chain and cross-border publisher payouts.</td><td class="status rm">Roadmap</td></tr>
+  </table>
+  </div>
+</div></section>
+
+<section id="honest"><div class="wrap">
+  <h2>Verification model, honestly</h2>
+  <p class="sub">
+    The deep problem is that the conversion event originates off-chain, inside the advertiser's systems —
+    the data producer is the paying party. This does not pretend to solve that with cryptography.
+  </p>
+  <div class="grid g3">
+    <div class="card"><div class="tick"></div>
+      <h3>Publisher-side fraud is policed deterministically</h3>
+      <p>Duplicates are refused by the contract itself; fabricated claims fail evidence-hash validation; impossible timing is rejected. Every refusal leaves permanent on-chain evidence.</p>
+    </div>
+    <div class="card"><div class="tick b"></div>
+      <h3>Advertiser-side is constrained by mechanism</h3>
+      <p>A verified claim auto-settles unless the advertiser objects inside the dispute window. Silence is acceptance, so stalling and quietly shaving submitted claims do not work.</p>
+    </div>
+    <div class="card"><div class="tick"></div>
+      <h3>Full symmetry is roadmap</h3>
+      <p>Web-proof verification of the conversion event itself (zkTLS-class suppliers), so neither side has to trust the other's systems.</p>
+    </div>
+  </div>
+  <p class="note">
+    The verifier applies published deterministic rules, with its policy hash committed on-chain and every
+    verdict permanently queryable. That is <b>auditable, not trustless</b> — and we would rather state the
+    limit than blur it.
+  </p>
+</div></section>
+
+<footer><div class="wrap">
+  <div class="row">
+    <div>
+      <div style="margin-bottom:8px">Deployed on Arc testnet · chain <code>5042002</code> · all contracts source-verified</div>
+      <div><code>AgentRegistry 0x3A1F…730a</code> · <code>ConversionRegistry 0xbdb4…9432</code> · <code>CampaignEscrow 0x194a…4520</code></div>
+    </div>
+    <div style="text-align:right">
+      <div><a href="https://demo.convertrail.xyz">Dashboard</a> · <a href="https://docs.convertrail.xyz">Docs</a> · <a href="https://github.com/LevCey/ConvertRail">GitHub</a></div>
+      <div style="margin-top:8px">LeventLabs</div>
+    </div>
+  </div>
+</div></footer>
+
+</body>
+</html>

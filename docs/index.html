@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConvertRail docs — architecture, verification, settlement</title>
+<meta name="description" content="How ConvertRail works: contracts, the claim lifecycle, the three deterministic checks, dispute-window auto-settle, Nanopayments settlement, and how to run it.">
+<link rel="icon" href="/mark.png">
+<style>
+  :root{
+    --bg:#0a0e17; --panel:#0f1523; --border:#1e2a44; --text:#e6edf7;
+    --muted:#8595b0; --accent:#2fe6d6; --blue:#2775ca; --danger:#ff5c72; --warn:#ffb454;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15.5px;line-height:1.7;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  code,pre,.mono{font-family:var(--mono)}
+  code{background:#131b2e;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.87em}
+  pre{background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:15px 17px;overflow-x:auto;font-size:13px;line-height:1.6}
+  pre code{background:none;border:none;padding:0;font-size:inherit}
+
+  nav{position:sticky;top:0;z-index:20;background:rgba(10,14,23,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+  nav .inner{max-width:1180px;margin:0 auto;padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:700}
+  .brand img{width:24px;height:24px;border-radius:5px}
+  .brand span{color:var(--accent)}
+  nav .links{display:flex;gap:20px;font-size:13.5px;font-family:var(--mono)}
+  nav .links a{color:var(--muted)} nav .links a:hover{color:var(--text);text-decoration:none}
+
+  .layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:225px 1fr;gap:44px;align-items:start}
+  aside{position:sticky;top:78px;padding:34px 0;font-family:var(--mono);font-size:13px}
+  aside div.t{color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-size:11px;margin:0 0 12px}
+  aside a{display:block;color:var(--muted);padding:5px 0;border-left:2px solid transparent;padding-left:11px;margin-left:-11px}
+  aside a:hover{color:var(--text);text-decoration:none;border-left-color:var(--border)}
+  main{padding:34px 0 90px;min-width:0;max-width:76ch}
+
+  h1{font-family:var(--mono);font-size:29px;margin:0 0 12px;letter-spacing:-.01em}
+  h2{font-family:var(--mono);font-size:20px;margin:52px 0 12px;padding-top:14px;border-top:1px solid var(--border);letter-spacing:-.01em}
+  h2:first-of-type{border-top:none;padding-top:0;margin-top:38px}
+  h3{font-size:15.5px;margin:26px 0 8px;font-family:var(--mono)}
+  p{margin:0 0 15px}
+  .lede{color:var(--muted);font-size:16.5px;margin-bottom:8px}
+  ul,ol{margin:0 0 15px;padding-left:22px} li{margin:6px 0}
+
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 18px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:400;font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono)}
+  td.mono,th.mono{font-family:var(--mono);font-size:12.5px}
+
+  .callout{border:1px solid var(--border);border-left:2px solid var(--accent);background:var(--panel);border-radius:0 9px 9px 0;padding:15px 18px;margin:20px 0;font-size:14.5px}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout b{color:var(--text)}
+  .pill{font-family:var(--mono);font-size:11.5px;padding:2px 7px;border-radius:4px;border:1px solid var(--border);color:var(--muted)}
+  .pill.ok{color:var(--accent);border-color:#1d4d4d}
+  .pill.no{color:var(--danger);border-color:#4d2029}
+  footer{border-top:1px solid var(--border);margin-top:60px;padding:26px 0 60px;color:var(--muted);font-size:13px;font-family:var(--mono)}
+  @media(max-width:860px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;padding:20px 0 0;border-bottom:1px solid var(--border)}aside a{display:inline-block;margin-right:14px;border-left:none;padding-left:0;margin-left:0}}
+</style>
+</head>
+<body>
+
+<nav><div class="inner">
+  <a class="brand" href="https://convertrail.xyz"><img src="/mark.png" alt=""><span>Convert</span>Rail</a>
+  <div class="links">
+    <a href="https://convertrail.xyz">Home</a>
+    <a href="https://demo.convertrail.xyz">Dashboard</a>
+    <a href="https://github.com/LevCey/ConvertRail">GitHub</a>
+  </div>
+</div></nav>
+
+<div class="layout">
+<aside>
+  <div class="t">Documentation</div>
+  <a href="#overview">Overview</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#lifecycle">Claim lifecycle</a>
+  <a href="#verification">Verification rules</a>
+  <a href="#dispute">Dispute window</a>
+  <a href="#settlement">Settlement</a>
+  <a href="#reallocation">Reallocation</a>
+  <a href="#running">Running it</a>
+  <a href="#deployed">Deployed addresses</a>
+  <a href="#limits">Limits &amp; roadmap</a>
+</aside>
+
+<main>
+<h1>ConvertRail documentation</h1>
+<p class="lede">
+  A neutral settlement rail for performance marketing on Arc: conversions verified by deterministic
+  rules, fraud refused on-chain, publishers paid per conversion in USDC.
+</p>
+
+<h2 id="overview">Overview</h2>
+<p>
+  Performance marketing is structurally adversarial. Conversions are reported by the advertiser — the
+  same party that pays — while advertisers face fabricated and duplicated conversions from publishers.
+  Below the top tier, settlement still runs on net-30 terms and $50–500 payout thresholds, because
+  paying per conversion is too expensive on legacy rails.
+</p>
+<p>
+  ConvertRail closes that loop with no humans in it. An advertiser agent funds an escrow and publishes
+  campaign rules on-chain; publisher agents submit claims with evidence; a deterministic verifier gates
+  every claim; verified claims auto-settle unless the advertiser objects; each settled conversion is paid
+  on its own through Circle Nanopayments; and the advertiser agent reallocates budget away from bad
+  traffic by itself.
+</p>
+
+<h2 id="architecture">Architecture</h2>
+<table>
+  <tr><th>Component</th><th>Responsibility</th></tr>
+  <tr><td class="mono">AgentRegistry</td><td>Roles: advertiser, publisher, verifier. The other two contracts gate their calls against it.</td></tr>
+  <tr><td class="mono">ConversionRegistry</td><td>Claims, evidence hashes, verdicts. <b>Refuses duplicate conversions itself</b> — the transaction reverts on-chain, no verifier involved.</td></tr>
+  <tr><td class="mono">CampaignEscrow</td><td>Budget commitment, per-publisher caps, dispute window, payout recognition, reallocation, and the true-up against the payment stream.</td></tr>
+  <tr><td class="mono">verifier</td><td>Applies the published deterministic rules and posts verdicts on-chain. Holds no funds and has no payment capability.</td></tr>
+  <tr><td class="mono">settlement</td><td>Recognizes the payout in escrow, then pays through Nanopayments. Reads only chain state, never the verifier directly.</td></tr>
+  <tr><td class="mono">agents</td><td>Advertiser, two publishers, and a scripted fraud agent. Deterministic policies over on-chain signals.</td></tr>
+  <tr><td class="mono">merchant-sim</td><td>The conversion source: signs conversion events. A demo stand-in for an advertiser's own reporting system.</td></tr>
+</table>
+<div class="callout">
+  <b>Separation of duties is structural, not conventional.</b> The verifier decides and the settlement
+  module pays, and they share nothing: the verifier holds no funds and cannot initiate a payment, while
+  settlement acts only on verdicts it reads back from the chain.
+</div>
+
+<h2 id="lifecycle">Claim lifecycle</h2>
+<pre><code>PENDING ──verdict:approved──▶ VERIFIED ──window passes──▶ SETTLED
+   │                             │
+   │                             └──advertiser objects──▶ DISPUTED
+   └──verdict:rejected──▶ REJECTED        (no path back to settlement)</code></pre>
+<p>
+  A claim carries a <b>nullifier</b> — a per-conversion uniqueness tag, <code>keccak256(campaignId ‖ conversionId)</code> —
+  and an <b>evidence hash</b>, the hash of the canonical serialization of the signed conversion event.
+  The registry stores the nullifier on submission, so a duplicate reverts before any verification happens,
+  and a rejected conversion id can never be resubmitted.
+</p>
+
+<h2 id="verification">Verification rules</h2>
+<p>
+  Three deterministic checks, applied in order. The verifier's configuration is hashed and committed
+  on-chain when the campaign is created, so the rules a claim is judged by are public before it is made.
+</p>
+<table>
+  <tr><th>Check</th><th>What it catches</th><th>Reason code</th></tr>
+  <tr><td>Duplicate nullifier</td><td>A conversion someone already claimed. Enforced by the contract, so the attempt is a reverted transaction on Arc.</td><td class="mono">(revert)</td></tr>
+  <tr><td>Evidence hash</td><td>A claim whose evidence matches no signed conversion event, points at another publisher's event, or belongs to another campaign.</td><td class="mono">EVIDENCE_MISMATCH</td></tr>
+  <tr><td>Timing</td><td>Conversions arriving impossibly soon after the click — bot traffic that no human generates.</td><td class="mono">TIMING_ANOMALY</td></tr>
+  <tr><td>Rate</td><td>Bursts beyond the configured per-publisher rate inside the window.</td><td class="mono">RATE_ANOMALY</td></tr>
+  <tr><td>Malformed</td><td>A conversion timestamped before its own click.</td><td class="mono">MALFORMED_EVIDENCE</td></tr>
+</table>
+<p>
+  The decision core is a pure function of <code>(claim, event, binding, policy, prior claims)</code>:
+  identical inputs always produce identical verdicts, which is what makes a refusal auditable after
+  the fact.
+</p>
+
+<h2 id="dispute">Dispute window and auto-settle</h2>
+<p>
+  A verified claim waits out a dispute window measured in blocks. If the advertiser does not object
+  within it, anyone may settle the claim — <b>silence is acceptance</b>. An objection inside the window
+  moves the claim to <code>DISPUTED</code> and blocks settlement for that claim alone; an objection after
+  the window reverts.
+</p>
+<div class="callout">
+  This is the half of the mechanism that constrains the <i>advertiser</i>. Deterministic rules police
+  publisher fraud, but nothing in cryptography stops a payer from stalling — so the contract removes
+  stalling as an option instead.
+</div>
+
+<h2 id="settlement">Settlement</h2>
+<p>
+  Recognition and payment are separate steps, in that order. <code>autoSettle</code> recognizes the payout
+  inside <code>CampaignEscrow</code>, which is where the per-publisher cap and total budget invariants are
+  enforced; only then does the settlement module pay.
+</p>
+<p>
+  Payment is a Circle Nanopayments authorization: one EIP-3009 <code>TransferWithAuthorization</code> per
+  conversion, verified and settled through the Gateway facilitator. Gateway aggregates authorizations
+  off-chain and settles them on-chain in batches, which is what makes a $0.10 payout economical.
+  A periodic true-up reconciles the payment stream back against escrow accounting.
+</p>
+<p>
+  The paying wallet is a <b>Circle developer-controlled wallet</b>. It signs each authorization through
+  Circle's signing API and its key never appears in the repository. Because Arc is not one of Circle's
+  managed chains, the wallet is created on the virtual <code>EVM-TESTNET</code> chain: Circle signs, this
+  system broadcasts. It must be an EOA — Gateway verifies EIP-3009 by ECDSA recovery — and it never
+  sends a transaction of its own, since provisioning credits its Gateway balance with
+  <code>depositFor</code>.
+</p>
+<table>
+  <tr><th>Signer</th><th>Median per-conversion payment</th></tr>
+  <tr><td>Circle developer-controlled wallet</td><td class="mono">952 ms</td></tr>
+  <tr><td>Local key</td><td class="mono">524 ms</td></tr>
+</table>
+<p>Both are instant beside the net-30 terms this replaces; <code>CIRCLE_WALLET_ID</code> selects between them without a code change.</p>
+
+<h2 id="reallocation">Autonomous reallocation</h2>
+<p>
+  The advertiser agent reads the same chain anyone else can — verdicts and refusals per publisher — and
+  applies a sliding-window policy: when a publisher's refusal rate crosses the configured threshold with
+  a minimum sample size, it moves that publisher's unspent cap headroom to the cleanest one and writes
+  the reason code <code>QUALITY_DIVERGENCE</code> on-chain with the transaction.
+</p>
+<p>
+  The policy is a pure function of the ordered verdict sequence, so replaying a run reproduces the same
+  decision. No model output participates in it, or anywhere else money moves.
+</p>
+
+<h2 id="running">Running it</h2>
+<p>Prerequisites: Node 24+, <a href="https://getfoundry.sh">Foundry</a> for the contracts, and an Arc testnet wallet funded from the <a href="https://faucet.circle.com/">Circle faucet</a>.</p>
+<pre><code>npm install
+cp .env.example .env      # set FUNDER_PRIVATE_KEY
+npm run provision         # generate agent wallets, fund, register roles, deposit into Gateway
+npm run demo              # drive the full adversarial loop against Arc testnet</code></pre>
+<p>
+  <code>npm run demo</code> is an acceptance gate, not a screensaver. It exits non-zero unless the
+  settlements land, every recognized payout has a matching payment, each deterministic rule refuses
+  something, at least one duplicate reverts on-chain, the advertiser agent reallocates budget by itself,
+  the fraud agent is paid nothing, and escrow accounting reconciles against the payment stream.
+</p>
+<div class="callout warn">
+  <b>Each run needs an unused campaign name</b> in <code>demo.config.json</code>. Conversion ids are
+  deterministic and nullifiers are consumed on submission, so re-running an old campaign makes every
+  honest claim revert as a duplicate.
+</div>
+<p>Watch it live with the dashboard, and run the tests:</p>
+<pre><code>cd dashboard &amp;&amp; npm install &amp;&amp; npm run dev   # http://localhost:4700
+
+npm test                    # canonical hashing, verifier rules, reallocation policy, parsers
+cd contracts &amp;&amp; forge test  # escrow accounting, dispute window, duplicate refusal, invariants</code></pre>
+
+<h2 id="deployed">Deployed addresses</h2>
+<p>Arc testnet, chain id <code>5042002</code>. All three contracts are source-verified, so the logic can be read on-chain rather than taken on faith.</p>
+<table>
+  <tr><th>Contract</th><th class="mono">Address</th></tr>
+  <tr><td>AgentRegistry</td><td class="mono"><a href="https://testnet.arcscan.app/address/0x3A1F744d7F5B1F6E462727A8897CC88E273F730a">0x3A1F744d7F5B1F6E462727A8897CC88E273F730a</a></td></tr>
+  <tr><td>ConversionRegistry</td><td class="mono"><a href="https://testnet.arcscan.app/address/0xbdb4e36DFb61A446Ec6900351b1A47754e389432">0xbdb4e36DFb61A446Ec6900351b1A47754e389432</a></td></tr>
+  <tr><td>CampaignEscrow</td><td class="mono"><a href="https://testnet.arcscan.app/address/0x194aCFf27b8fbe332dab5ffba8d5318708d74520">0x194aCFf27b8fbe332dab5ffba8d5318708d74520</a></td></tr>
+</table>
+
+<h2 id="limits">Limits and roadmap</h2>
+<p>
+  The conversion event originates off-chain, inside the advertiser's systems, and the data producer is
+  the paying party. That is not solved here with cryptography, and the distinction matters:
+</p>
+<ul>
+  <li><span class="pill ok">deterministic</span> Publisher-side fraud — duplicates, fabricated claims, impossible timing — refused by rule, with permanent on-chain evidence.</li>
+  <li><span class="pill ok">mechanism</span> Advertiser-side stalling — removed by dispute-window auto-settle, not by proof.</li>
+  <li><span class="pill no">not yet</span> Proof that the reported conversion happened at all. The verifier applies published rules with its policy hash on-chain, which is <b>auditable, not trustless</b>.</li>
+</ul>
+<p>On the roadmap, in order:</p>
+<ul>
+  <li><b>Web-proof verification</b> of conversion events (zkTLS-class suppliers), so neither side has to trust the other's systems.</li>
+  <li><b>Confidential referee</b> — verification inside confidential compute, so neither side exposes raw campaign data.</li>
+  <li><b>Cross-chain payouts</b> — CCTP for publishers settling elsewhere, StableFX for non-USD payout currencies.</li>
+  <li><b>Dispute resolution</b> beyond the current terminal <code>DISPUTED</code> state, which records the dispute and its evidence but does not adjudicate it.</li>
+</ul>
+
+<footer>
+  <a href="https://convertrail.xyz">convertrail.xyz</a> ·
+  <a href="https://demo.convertrail.xyz">dashboard</a> ·
+  <a href="https://github.com/LevCey/ConvertRail">github.com/LevCey/ConvertRail</a> · LeventLabs
+</footer>
+</main>
+</div>
+
+</body>
+</html>
