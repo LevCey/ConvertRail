@@ -183,4 +183,8 @@ Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), A
 
 ## Team
 
-LeventLabs.
+**Levent Ceyhan — LeventLabs.** Fifteen years on the demand side of this market: Google Ads account strategist, then seven years running performance marketing at Xylem, then independent work in the same field. ConvertRail is a settlement problem watched from inside it — publishers waiting out net-30, advertisers paying for traffic nobody could verify, and both sides arguing from their own dashboards.
+
+The engineering half comes from LeventLabs' work on confidential coordination in regulated finance. [AttestRail](https://attestrail.com) enforces eligibility and exposure rules over fully encrypted on-chain state on Zama's FHEVM, publishing only the final decision bit and never the attributes behind it (Zama Developer Program, Builder Track winner). An earlier AML prediction network on Canton let institutions share calibrated risk signals without sharing the data underneath (Canton Construct 2025 winner).
+
+That is where the confidential-referee line on the roadmap comes from. It is the same shape as this problem: a rule applied to inputs neither side wants to reveal, with only the verdict made public. ConvertRail does it in the open today — deterministic rules, published policy hash, every verdict queryable — because being auditable now beats being confidential later. The next step is doing it without either side exposing its campaign data.
