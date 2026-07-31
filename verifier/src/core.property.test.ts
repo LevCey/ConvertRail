@@ -11,7 +11,7 @@ import {
   type SignedConversionEvent,
   type VerificationPolicy,
 } from "@convertrail/shared";
-import { decide, type ClaimInput } from "./core.ts";
+import { decide, type ClaimInput, type FundingLink } from "./core.ts";
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -46,6 +46,8 @@ function cleanSample(rand: () => number): Sample {
     minClickToConversionMs: 500 + Math.floor(rand() * 3000),
     maxClaimsPerWindow: 1 + Math.floor(rand() * 20),
     rateWindowMs: 60_000,
+    maxFundingLinkHops: Math.floor(rand() * 3), // 0, 1 or 2
+    fundingHubMinDegree: 2 + Math.floor(rand() * 5),
   };
 
   const clickTs = Math.floor(rand() * 1e12);
@@ -76,11 +78,19 @@ function randHex(rand: () => number, bytes: number): string {
   return out;
 }
 
+function randLink(rand: () => number, hops: number): FundingLink {
+  return {
+    counterparty: randHex(rand, 20) as Address,
+    hops,
+    ...(hops === 2 ? { via: randHex(rand, 20) as Address } : {}),
+  };
+}
+
 test("property: a fully-clean claim is always approved", () => {
   const rand = mulberry32(1);
   for (let i = 0; i < ITERATIONS; i++) {
     const s = cleanSample(rand);
-    strictEqual(decide(s.claim, s.event, s.binding, s.policy, s.prior).approved, true, `iter ${i}`);
+    strictEqual(decide(s.claim, s.event, s.binding, s.policy, s.prior, null).approved, true, `iter ${i}`);
   }
 });
 
@@ -91,7 +101,8 @@ test("property: decide is total — never throws on structured input", () => {
       const s = cleanSample(rand);
       // randomly corrupt fields to exercise every branch
       const event = rand() < 0.5 ? null : s.event;
-      decide(s.claim, event, s.binding, s.policy, s.prior);
+      const link = rand() < 0.5 ? null : randLink(rand, 1 + Math.floor(rand() * 3));
+      decide(s.claim, event, s.binding, s.policy, s.prior, link);
     }
   });
 });
@@ -100,7 +111,10 @@ test("property: a fabricated claim (no matching event) is always EVIDENCE_MISMAT
   const rand = mulberry32(3);
   for (let i = 0; i < ITERATIONS; i++) {
     const s = cleanSample(rand);
-    const verdict = decide(s.claim, null, s.binding, s.policy, s.prior);
+    // Evidence outranks identity: a funding link present or absent must not
+    // change which defect is reported.
+    const link = rand() < 0.5 ? null : randLink(rand, 1);
+    const verdict = decide(s.claim, null, s.binding, s.policy, s.prior, link);
     strictEqual(verdict.approved, false);
     if (!verdict.approved) strictEqual(verdict.reason, "EVIDENCE_MISMATCH", `iter ${i}`);
   }
@@ -114,7 +128,7 @@ test("property: conversion-before-click is always MALFORMED_EVIDENCE", () => {
     // nullifier + binding still valid, so the malformed check is what fires.
     const event = { ...base.event, clickTs: base.event.conversionTs, conversionTs: base.event.clickTs };
     const claim = { ...base.claim, evidenceHash: evidenceHash(event) };
-    const verdict = decide(claim, event, base.binding, base.policy, base.prior);
+    const verdict = decide(claim, event, base.binding, base.policy, base.prior, null);
     strictEqual(verdict.approved, false);
     if (!verdict.approved) strictEqual(verdict.reason, "MALFORMED_EVIDENCE", `iter ${i}`);
   }
@@ -125,9 +139,35 @@ test("property: at/over the rate cap (clean otherwise) is always RATE_ANOMALY", 
   for (let i = 0; i < ITERATIONS; i++) {
     const s = cleanSample(rand);
     const prior = Array.from({ length: s.policy.maxClaimsPerWindow + Math.floor(rand() * 5) }, (_, k) => k);
-    const verdict = decide(s.claim, s.event, s.binding, s.policy, prior);
+    const verdict = decide(s.claim, s.event, s.binding, s.policy, prior, null);
     strictEqual(verdict.approved, false);
     if (!verdict.approved) strictEqual(verdict.reason, "RATE_ANOMALY", `iter ${i}`);
+  }
+});
+
+test("property: a link within policy hops is always LINKED_PUBLISHER", () => {
+  const rand = mulberry32(7);
+  for (let i = 0; i < ITERATIONS; i++) {
+    const s = cleanSample(rand);
+    // Force a policy that refuses links, then link at or inside its threshold.
+    const policy = { ...s.policy, maxFundingLinkHops: 1 + Math.floor(rand() * 2) };
+    const hops = 1 + Math.floor(rand() * policy.maxFundingLinkHops);
+    const verdict = decide(s.claim, s.event, s.binding, policy, s.prior, randLink(rand, hops));
+    strictEqual(verdict.approved, false);
+    if (!verdict.approved) strictEqual(verdict.reason, "LINKED_PUBLISHER", `iter ${i}`);
+  }
+});
+
+test("property: a link beyond policy hops never changes the verdict", () => {
+  const rand = mulberry32(8);
+  for (let i = 0; i < ITERATIONS; i++) {
+    const s = cleanSample(rand);
+    const distant = randLink(rand, s.policy.maxFundingLinkHops + 1 + Math.floor(rand() * 3));
+    strictEqual(
+      JSON.stringify(decide(s.claim, s.event, s.binding, s.policy, s.prior, distant)),
+      JSON.stringify(decide(s.claim, s.event, s.binding, s.policy, s.prior, null)),
+      `iter ${i}`,
+    );
   }
 });
 
@@ -136,8 +176,9 @@ test("property: determinism — identical inputs yield identical verdicts", () =
   for (let i = 0; i < ITERATIONS; i++) {
     const s = cleanSample(rand);
     const event = rand() < 0.5 ? null : s.event;
-    const a = decide(s.claim, event, s.binding, s.policy, s.prior);
-    const b = decide(s.claim, event, s.binding, s.policy, s.prior);
+    const link = rand() < 0.5 ? null : randLink(rand, 1 + Math.floor(rand() * 2));
+    const a = decide(s.claim, event, s.binding, s.policy, s.prior, link);
+    const b = decide(s.claim, event, s.binding, s.policy, s.prior, link);
     strictEqual(JSON.stringify(a), JSON.stringify(b), `iter ${i}`);
   }
 });

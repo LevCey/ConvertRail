@@ -103,6 +103,28 @@ contract ConversionRegistryTest is Test {
         assertEq(uint8(claim.reason), uint8(RejectReason.EVIDENCE_MISMATCH));
     }
 
+    function test_rejectReasonOrdinalsAreStable() public pure {
+        // Verdicts are permanent public records, and a reason code is only
+        // meaningful if its ordinal never moves. New reasons append; existing
+        // ones keep their number so evidence written by an earlier deployment
+        // still decodes correctly against this ABI.
+        assertEq(uint8(RejectReason.NONE), 0);
+        assertEq(uint8(RejectReason.EVIDENCE_MISMATCH), 1);
+        assertEq(uint8(RejectReason.TIMING_ANOMALY), 2);
+        assertEq(uint8(RejectReason.RATE_ANOMALY), 3);
+        assertEq(uint8(RejectReason.MALFORMED_EVIDENCE), 4);
+        assertEq(uint8(RejectReason.LINKED_PUBLISHER), 5);
+    }
+
+    function test_rejectClaimForLinkedPublisher() public {
+        uint256 claimId = _submit();
+        vm.prank(verifier);
+        registry.postVerdict(claimId, false, RejectReason.LINKED_PUBLISHER);
+        Claim memory claim = registry.getClaim(claimId);
+        assertEq(uint8(claim.status), uint8(ClaimStatus.REJECTED));
+        assertEq(uint8(claim.reason), uint8(RejectReason.LINKED_PUBLISHER));
+    }
+
     function test_approvalRejectsSpuriousReason() public {
         uint256 claimId = _submit();
         vm.prank(verifier);

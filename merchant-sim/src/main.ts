@@ -74,6 +74,15 @@ if (bot) {
   setInterval(() => void emitEvent(config.fraud.id, bot.clickToConversionMs), bot.eventIntervalMs);
 }
 
+// The fraud agent's second identity produces entirely ordinary traffic: real
+// signed events with human click-to-conversion delays. Nothing about these
+// conversions is wrong, which is the point — the defect is who is claiming
+// them, not what happened.
+const sybil = config.fraud.sybil;
+if (sybil) {
+  setInterval(() => void emitEvent(sybil.id), sybil.eventIntervalMs);
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   res.setHeader("Content-Type", "application/json");

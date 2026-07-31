@@ -48,12 +48,15 @@ export const CLAIM_STATUS = {
   DISPUTED: 5,
 } as const;
 
+// Mirrors RejectReason in ConversionRegistry.sol. Append-only: existing codes
+// keep their values so verdicts from earlier deployments stay readable.
 export const REJECT_REASON = {
   NONE: 0,
   EVIDENCE_MISMATCH: 1,
   TIMING_ANOMALY: 2,
   RATE_ANOMALY: 3,
   MALFORMED_EVIDENCE: 4,
+  LINKED_PUBLISHER: 5,
 } as const;
 
 export const ROLE = {

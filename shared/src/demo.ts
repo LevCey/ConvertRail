@@ -7,6 +7,28 @@ export interface VerificationPolicy {
   minClickToConversionMs: number;
   maxClaimsPerWindow: number;
   rateWindowMs: number;
+  /**
+   * Funding-graph distance at which a claimant linked to another participant in
+   * the same campaign is refused: 0 disables the check, 1 refuses a claimant
+   * funded directly by another participant, 2 also refuses claimants sharing a
+   * funder with one. Two identities funded from one purse are one operator, and
+   * paying an operator for referring itself is the fraud the rail exists to
+   * refuse.
+   */
+  maxFundingLinkHops: number;
+  /**
+   * Out-degree at which a funding address is treated as shared infrastructure
+   * (a faucet, exchange, or provisioning wallet) and stops creating links. The
+   * false-positive control the measurement literature relies on: without it a
+   * single high-degree funder merges unrelated operators into one cluster.
+   */
+  fundingHubMinDegree: number;
+  /**
+   * How many blocks before its own start block the verifier indexes when
+   * building the funding graph. Part of the policy because it bounds what the
+   * funding rules can see, and therefore which verdicts they can reach.
+   */
+  fundingScanDepthBlocks: number;
 }
 
 export interface DemoConfig {
@@ -26,6 +48,11 @@ export interface DemoConfig {
      * merchant's records, but converting impossibly soon after the click —
      * the pattern the timing rule exists to catch. */
     botTraffic?: { eventIntervalMs: number; clickToConversionMs: number };
+    /** A second publisher identity the fraud agent registers and funds from
+     * its own wallet, then claims from. Its conversions are genuine and its
+     * timing is human, so only the funding graph separates it from an
+     * independent publisher. */
+    sybil?: { id: string; eventIntervalMs: number; fundingWei: string };
   };
   verification: VerificationPolicy;
   reallocation: {

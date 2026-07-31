@@ -1,4 +1,4 @@
-// Fraud agent — the demo's scripted antagonist. Three attack classes, one per
+// Fraud agent — the demo's scripted antagonist. Four attack classes, one per
 // deterministic rule the verification layer enforces:
 //   duplicate:   replays the nullifier of a conversion the clean publisher
 //                already claimed — refused by the contract itself (real
@@ -8,6 +8,10 @@
 //   bot traffic: claims its own synthetic conversions, which are genuine
 //                merchant events but convert impossibly soon after the click
 //                — rejected as TIMING_ANOMALY
+//   linked:      runs a second registered publisher identity funded out of
+//                this wallet and claims from it. Evidence, binding and timing
+//                are all genuine; the funding graph is the only thing that
+//                tells two identities from two operators — LINKED_PUBLISHER
 // Attack mix and rate are deterministic script parameters (reproducible takes).
 import { appendFileSync, mkdirSync } from "node:fs";
 import { encodeFunctionData, keccak256, stringToBytes } from "viem";
@@ -33,6 +37,10 @@ const campaignId = campaignIdFromName(config.campaign.name);
 const fraudPublisher = wallets[config.fraud.id].address;
 const merchantBase = `http://localhost:${config.merchantSim.port}`;
 const victimId = config.publishers[0].id;
+
+const sybilConfig = config.fraud.sybil;
+const sybilEntry = sybilConfig ? wallets[sybilConfig.id] : undefined;
+const sybilWallet = sybilEntry ? walletClient(env, sybilEntry.privateKey) : null;
 
 mkdirSync(".e2e", { recursive: true });
 const FRAUD_LOG = ".e2e/fraud.jsonl";
@@ -158,6 +166,84 @@ async function botTrafficAttack(): Promise<void> {
   );
 }
 
+/** Linked-publisher attack. The second identity is a properly registered
+ * publisher whose conversions are real merchant events with human timing — it
+ * would be indistinguishable from an independent partner if the funding
+ * transaction below did not exist. That transfer is the whole evidence trail,
+ * and the verifier reads it from the chain like anyone else could. */
+let sybilFunded = false;
+let sybilSinceSeq = 0;
+
+async function linkedPublisherAttack(): Promise<void> {
+  if (!sybilConfig || !sybilEntry || !sybilWallet) return;
+
+  if (!sybilFunded) {
+    const target = BigInt(sybilConfig.fundingWei);
+    const balance = await pub.getBalance({ address: sybilEntry.address });
+    if (balance < target) {
+      const hash = await wallet.sendTransaction({ to: sybilEntry.address, value: target - balance });
+      const receipt = await pub.waitForTransactionReceipt({ hash });
+      appendFileSync(
+        FRAUD_LOG,
+        JSON.stringify({
+          type: "sybil_funding",
+          campaignId,
+          campaignName: config.campaign.name,
+          publisher: fraudPublisher,
+          sybilId: sybilConfig.id,
+          sybilAddress: sybilEntry.address,
+          value: (target - balance).toString(),
+          txHash: hash,
+          status: receipt.status,
+        }) + "\n",
+      );
+      console.log(
+        `funded second identity ${sybilConfig.id} (${sybilEntry.address}) from ${fraudPublisher}: ` +
+          `${receipt.status} tx=${hash.slice(0, 14)}...`,
+      );
+    }
+    sybilFunded = true;
+    return; // claim on the next turn, with the funding edge already on-chain
+  }
+
+  const res = await fetch(
+    `${merchantBase}/events?publisherId=${sybilConfig.id}&sinceSeq=${sybilSinceSeq}`,
+  );
+  if (!res.ok) return;
+  const body = (await res.json()) as { events: { seq: number; event: SignedConversionEvent }[] };
+  const next = body.events[0];
+  if (!next) return;
+  sybilSinceSeq = Math.max(sybilSinceSeq, next.seq);
+
+  const sybilNullifier = nullifier(campaignId, next.event.conversionId);
+  const sybilEvidenceHash = evidenceHash(next.event);
+  const hash = await sybilWallet.writeContract({
+    address: env.conversionRegistry,
+    abi: conversionRegistryAbi,
+    functionName: "submitClaim",
+    args: [campaignId, sybilNullifier, sybilEvidenceHash],
+  });
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  appendFileSync(
+    FRAUD_LOG,
+    JSON.stringify({
+      type: "linked_publisher",
+      campaignId,
+      campaignName: config.campaign.name,
+      publisher: sybilEntry.address,
+      fundedBy: fraudPublisher,
+      nullifier: sybilNullifier,
+      evidenceHash: sybilEvidenceHash,
+      txHash: hash,
+      status: receipt.status,
+      conversionId: next.event.conversionId,
+    }) + "\n",
+  );
+  console.log(
+    `linked-publisher attack ${next.event.conversionId} from ${sybilConfig.id}: submitted tx=${hash.slice(0, 14)}...`,
+  );
+}
+
 let turn = 0;
 console.log(`fraud agent ${config.fraud.id} (${fraudPublisher}) attacking every ${config.fraud.attackIntervalMs}ms`);
 
@@ -166,11 +252,12 @@ setInterval(async () => {
   if (ticking) return;
   ticking = true;
   try {
-    // Deterministic rotation: fabricated, duplicate, bot traffic, repeat.
-    const which = turn++ % 3;
+    // Deterministic rotation: fabricated, duplicate, bot traffic, linked, repeat.
+    const which = turn++ % 4;
     if (which === 0) await fabricatedAttack();
     else if (which === 1) await duplicateAttack();
-    else await botTrafficAttack();
+    else if (which === 2) await botTrafficAttack();
+    else await linkedPublisherAttack();
   } catch (err) {
     console.error("fraud loop error:", (err as Error).message.split("\n")[0]);
   } finally {

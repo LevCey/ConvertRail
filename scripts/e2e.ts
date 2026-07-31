@@ -23,7 +23,15 @@ const wallets = loadWallets();
 const env = chainEnvFromProcess();
 const pub = publicClient(env);
 const campaignId = campaignIdFromName(config.campaign.name);
-const fraudAddress = wallets[config.fraud.id].address.toLowerCase();
+// Both identities the fraud agent operates. The second one exists precisely to
+// look like someone else, so the "nothing was paid to the attacker" gate has to
+// cover it — otherwise the one attack designed to evade attribution would also
+// evade the assertion.
+const fraudAddresses = new Set(
+  [config.fraud.id, ...(config.fraud.sybil ? [config.fraud.sybil.id] : [])].map((id) =>
+    wallets[id].address.toLowerCase(),
+  ),
+);
 
 rmSync(".e2e", { recursive: true, force: true });
 mkdirSync(".e2e", { recursive: true });
@@ -163,8 +171,8 @@ async function collect(): Promise<Summary> {
       (l.args as { campaignId: `0x${string}` }).campaignId === campaignId;
     const settledThis = settledLogs.filter(inCampaign);
     acc.settled += settledThis.length;
-    acc.fraudSettled += settledThis.filter(
-      (l) => (l.args as { publisher: string }).publisher.toLowerCase() === fraudAddress,
+    acc.fraudSettled += settledThis.filter((l) =>
+      fraudAddresses.has((l.args as { publisher: string }).publisher.toLowerCase()),
     ).length;
     const rejectedThis = rejectedLogs.filter(inCampaign);
     acc.rejected += rejectedThis.length;
@@ -288,7 +296,9 @@ while (Date.now() - started < DEADLINE_MS) {
   });
   console.log(
     `[e2e] settled=${summary.settled}/${TARGET_SETTLED} paid=${summary.payments} rejected=${summary.rejected}` +
-      ` (evidence=${summary.rejectReasons[REJECT_REASON.EVIDENCE_MISMATCH] ?? 0} timing=${summary.rejectReasons[REJECT_REASON.TIMING_ANOMALY] ?? 0})` +
+      ` (evidence=${summary.rejectReasons[REJECT_REASON.EVIDENCE_MISMATCH] ?? 0}` +
+      ` timing=${summary.rejectReasons[REJECT_REASON.TIMING_ANOMALY] ?? 0}` +
+      ` linked=${summary.rejectReasons[REJECT_REASON.LINKED_PUBLISHER] ?? 0})` +
       ` dupReverts=${summary.duplicateReverts} realloc=${summary.reallocations} fraudSettled=${summary.fraudSettled}`,
   );
   if (
@@ -296,6 +306,7 @@ while (Date.now() - started < DEADLINE_MS) {
     summary.payments >= TARGET_SETTLED &&
     ruleFired(REJECT_REASON.EVIDENCE_MISMATCH) &&
     ruleFired(REJECT_REASON.TIMING_ANOMALY) &&
+    ruleFired(REJECT_REASON.LINKED_PUBLISHER) &&
     summary.duplicateReverts >= 1 &&
     summary.reallocations >= 1
   ) {
@@ -334,6 +345,9 @@ if (summary.payments < summary.settled) failures.push(`payments ${summary.paymen
 // only one of them fires does not demonstrate the verification layer it claims.
 if (!ruleFired(REJECT_REASON.EVIDENCE_MISMATCH)) failures.push("no fabricated-claim rejection (EVIDENCE_MISMATCH)");
 if (!ruleFired(REJECT_REASON.TIMING_ANOMALY)) failures.push("no bot-traffic rejection (TIMING_ANOMALY)");
+if (config.fraud.sybil && !ruleFired(REJECT_REASON.LINKED_PUBLISHER)) {
+  failures.push("no linked-identity rejection (LINKED_PUBLISHER)");
+}
 if (summary.duplicateReverts < 1) failures.push("no on-chain duplicate revert");
 if (summary.reallocations < 1) failures.push("no autonomous reallocation");
 if (summary.fraudSettled > 0) failures.push(`fraud publisher got ${summary.fraudSettled} settlements`);

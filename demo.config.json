@@ -27,12 +27,20 @@
     "botTraffic": {
       "eventIntervalMs": 9000,
       "clickToConversionMs": 300
+    },
+    "sybil": {
+      "id": "pub-y",
+      "eventIntervalMs": 11000,
+      "fundingWei": "100000000000000000"
     }
   },
   "verification": {
     "minClickToConversionMs": 1500,
     "maxClaimsPerWindow": 30,
-    "rateWindowMs": 60000
+    "rateWindowMs": 60000,
+    "maxFundingLinkHops": 2,
+    "fundingHubMinDegree": 3,
+    "fundingScanDepthBlocks": 0
   },
   "reallocation": {
     "windowSize": 8,

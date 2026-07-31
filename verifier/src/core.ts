@@ -17,6 +17,21 @@ export interface ClaimInput {
   evidenceHash: Hex;
 }
 
+/**
+ * A funding-graph relationship between the claimant and another participant in
+ * the same campaign, resolved from chain by the caller. Resolving it is I/O and
+ * therefore does not belong in this module (R6.2).
+ */
+export interface FundingLink {
+  /** The other campaign participant the claimant resolves to. */
+  counterparty: Address;
+  /** 1 = counterparty funded the claimant directly; 2 = both were funded by
+   *  the same non-hub address. */
+  hops: number;
+  /** The shared funder, when `hops` is 2. */
+  via?: Address;
+}
+
 export type Verdict = { approved: true } | { approved: false; reason: Exclude<RejectReasonName, "NONE"> };
 
 /**
@@ -26,6 +41,8 @@ export type Verdict = { approved: true } | { approved: false; reason: Exclude<Re
  * @param policy        the published verification policy (hash committed on-chain)
  * @param priorClaimsMs submission timestamps (ms) of this publisher's prior
  *                      claims inside the rate window, excluding this claim
+ * @param fundingLink   funding-graph link from this claimant to another
+ *                      participant, or null if the caller found none
  */
 export function decide(
   claim: ClaimInput,
@@ -33,6 +50,7 @@ export function decide(
   binding: Record<string, Address>,
   policy: VerificationPolicy,
   priorClaimsMs: number[],
+  fundingLink: FundingLink | null,
 ): Verdict {
   if (event === null) {
     return { approved: false, reason: "EVIDENCE_MISMATCH" };
@@ -51,6 +69,15 @@ export function decide(
   const boundAddress = binding[event.publisherId];
   if (!boundAddress || boundAddress.toLowerCase() !== claim.publisher.toLowerCase()) {
     return { approved: false, reason: "EVIDENCE_MISMATCH" };
+  }
+  // Identity integrity. The claim is now known to reference a genuine event by
+  // a bound publisher, so the remaining question is whether that publisher is
+  // an independent party. A second identity funded out of another
+  // participant's wallet is the same operator referring itself; the evidence
+  // and the timing of such a claim are perfectly real, which is exactly why no
+  // other rule catches it.
+  if (fundingLink !== null && fundingLink.hops <= policy.maxFundingLinkHops) {
+    return { approved: false, reason: "LINKED_PUBLISHER" };
   }
   if (event.conversionTs < event.clickTs) {
     return { approved: false, reason: "MALFORMED_EVIDENCE" };

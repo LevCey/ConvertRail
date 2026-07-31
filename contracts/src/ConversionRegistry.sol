@@ -12,12 +12,15 @@ enum ClaimStatus {
     DISPUTED
 }
 
+/// @dev Append-only. Existing members keep their ordinal so verdicts recorded
+/// by earlier deployments stay readable against this ABI.
 enum RejectReason {
     NONE,
     EVIDENCE_MISMATCH,
     TIMING_ANOMALY,
     RATE_ANOMALY,
-    MALFORMED_EVIDENCE
+    MALFORMED_EVIDENCE,
+    LINKED_PUBLISHER
 }
 
 struct Claim {

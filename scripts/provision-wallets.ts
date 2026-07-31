@@ -14,10 +14,28 @@ import {
   ROLE,
 } from "@convertrail/shared";
 
-const WALLET_NAMES = ["advertiser", "operational", "verifier", "merchant", "pub-a", "pub-b", "pub-x"] as const;
+const WALLET_NAMES = [
+  "advertiser",
+  "operational",
+  "verifier",
+  "merchant",
+  "pub-a",
+  "pub-b",
+  "pub-x",
+  "pub-y",
+] as const;
 type WalletName = (typeof WALLET_NAMES)[number];
 
 const config = loadDemoConfig();
+
+// Wallets this script deliberately leaves unfunded. The merchant signs events
+// off-chain and never sends a transaction. The fraud agent's second identity
+// must receive its gas from the fraud wallet during the run, because that
+// transfer is the evidence the funding rule reads — provisioning it from the
+// shared funder here would erase the link the demo exists to detect, and would
+// put it in the same cluster as every honest publisher.
+const sybilName = config.fraud.sybil?.id as WalletName | undefined;
+const UNFUNDED = new Set<WalletName>(sybilName ? ["merchant", sybilName] : ["merchant"]);
 const TARGET_SETTLED = Number(process.env.E2E_TARGET_SETTLED ?? 50);
 if (!Number.isSafeInteger(TARGET_SETTLED) || TARGET_SETTLED <= 0) {
   throw new Error(`invalid E2E_TARGET_SETTLED ${process.env.E2E_TARGET_SETTLED}`);
@@ -33,7 +51,8 @@ const NATIVE_TARGET: Record<WalletName, bigint> = {
   merchant: 0n,
   "pub-a": parseEther("0.50"),
   "pub-b": parseEther("0.40"),
-  "pub-x": parseEther("0.30"),
+  "pub-x": parseEther("0.45"), // also funds pub-y mid-run, out of this balance
+  "pub-y": 0n,
 };
 const ADVERTISER_TARGET_USDC = BigInt(config.campaign.budget) + parseUnits("1", 6);
 const GATEWAY_HEADROOM_USDC = parseUnits("1", 6); // absorbs claims landing during the harness stop interval
@@ -378,7 +397,7 @@ async function ensureGatewayDeposit(operational: WalletEntry, initialAvailable: 
 const wallets = loadOrCreateWallets();
 
 for (const name of WALLET_NAMES) {
-  if (name === "merchant") continue; // signs events off-chain only, needs no funds
+  if (UNFUNDED.has(name)) continue;
   await ensureNative(name, wallets[name].address);
 }
 
@@ -387,6 +406,10 @@ await ensureRole("verifier", wallets.verifier.address, ROLE.VERIFIER);
 await ensureRole("pub-a", wallets["pub-a"].address, ROLE.PUBLISHER);
 await ensureRole("pub-b", wallets["pub-b"].address, ROLE.PUBLISHER);
 await ensureRole("pub-x", wallets["pub-x"].address, ROLE.PUBLISHER);
+// Registration is a call by the funder against the registry, not a transfer to
+// the address, so it creates no funding edge — the second identity stays
+// unfunded until the fraud agent pays for it.
+if (sybilName) await ensureRole(sybilName, wallets[sybilName].address, ROLE.PUBLISHER);
 
 const initialGatewayAvailable = await readGatewayAvailable(wallets.operational);
 const requiredGatewayDeposit =
@@ -401,7 +424,7 @@ await ensureFunderReserve(wallets.operational);
 // Final loud assertion pass.
 const failures: string[] = [];
 for (const name of WALLET_NAMES) {
-  if (name === "merchant") continue;
+  if (UNFUNDED.has(name)) continue;
   const balance = await withRetry(`assert gas ${name}`, () => pub.getBalance({ address: wallets[name].address }));
   if (balance < MIN_NATIVE) failures.push(`${name}: native ${formatUnits(balance, 18)} < floor`);
 }

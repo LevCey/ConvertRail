@@ -147,6 +147,7 @@ export const REJECT_REASON: Record<number, string> = {
   2: "TIMING_ANOMALY",
   3: "RATE_ANOMALY",
   4: "MALFORMED_EVIDENCE",
+  5: "LINKED_PUBLISHER",
 };
 
 export const CLAIM_STATUS: Record<number, string> = {
