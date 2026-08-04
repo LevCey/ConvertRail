@@ -24,7 +24,7 @@ The full adversarial loop runs agent-to-agent, with no humans in the flow:
 
 1. An **advertiser agent** funds a USDC escrow and publishes campaign rules on-chain: the offer, the price per conversion (the CPA — *cost per action*), total budget, per-publisher caps, and the verification policy.
 2. **Publisher agents** drive conversions and submit claims with evidence.
-3. A **deterministic verification layer** gates every claim: duplicate detection (each conversion carries a *nullifier* — a unique fingerprint the contract accepts only once), evidence-hash validation against the signed conversion event, and timing-anomaly checks.
+3. A **deterministic verification layer** gates every claim: duplicate detection (each conversion carries a *nullifier* — a unique fingerprint the contract accepts only once), evidence-hash validation against the signed conversion event, timing-anomaly checks, and a funding-graph test that refuses a claimant which is not an independent party.
 4. A verified conversion is paid **instantly and gas-free, in full, per conversion** via Circle Nanopayments.
 5. A claim that passes verification **auto-settles unless the advertiser objects within a dispute window** — silence is acceptance, so the referee constrains both sides, not just publishers.
 6. A fraudulent claim is **refused by the contract itself, on-chain**, and the attempt is permanently logged with its evidence.
@@ -86,7 +86,7 @@ The verifier in this MVP is a service applying published deterministic rules, wi
 
 | Tool | How ConvertRail uses it | Status |
 |---|---|---|
-| **Nanopayments** | The headline mechanic. Every verified conversion is paid on its own — instant, gas-free, full amount, no threshold. The settlement module signs one EIP-3009 authorization per conversion and settles it through the Gateway facilitator (`@circle-fin/x402-batching`) — a median round trip of 952 ms across the 50 payments of the reference run. | Integrated |
+| **Nanopayments** | The headline mechanic. Every verified conversion is paid on its own — instant, gas-free, full amount, no threshold. The settlement module signs one EIP-3009 authorization per conversion and settles it through the Gateway facilitator (`@circle-fin/x402-batching`) — a median round trip of 940 ms across the 50 payments of the reference run. | Integrated |
 | **Gateway** | The layer underneath Nanopayments: the paying wallet holds a USDC balance in Gateway, each authorization is verified off-chain in a few hundred milliseconds, and settlement lands on-chain in batches. | Integrated |
 | **Circle Wallets** | The wallet that pays publishers is a Circle developer-controlled wallet. It signs every per-conversion authorization through Circle's signing API; the private key is never in this repository. Arc is not one of Circle's managed chains, so the wallet is created on the virtual EVM-TESTNET chain and Circle signs while this repository broadcasts. It is an EOA by requirement — Gateway verifies EIP-3009 by ECDSA recovery — and it never sends a transaction of its own, because provisioning credits its Gateway balance with `depositFor`. | Integrated |
 | **USDC on Arc** | The entire economy of the demo. Campaign budgets, escrow accounting, publisher payouts, and gas are all denominated in USDC. | Integrated |
@@ -94,7 +94,7 @@ The verifier in this MVP is a service applying published deterministic rules, wi
 | Circle Contracts | Not used. The three contracts are hand-written Solidity, deployed with Foundry and source-verified on the explorer; the escrow's cap, dispute-window, and refusal logic is specific enough that a template deployment would not carry it. | Not used |
 | CCTP / StableFX | Cross-chain and cross-border publisher payouts. | Roadmap |
 
-Signing through Circle costs a network round trip: the same loop signed by a local key pays in a median of 524 ms rather than 952 ms. Both are instant next to the net-30 terms this replaces, and `CIRCLE_WALLET_ID` selects between them without a code change.
+Signing through Circle costs a network round trip: in a paired measurement of the same loop, a local key paid in a median of 524 ms against the Circle wallet's 952 ms. Both are instant next to the net-30 terms this replaces, and `CIRCLE_WALLET_ID` selects between them without a code change.
 
 ## Deployed on Arc testnet
 
@@ -102,9 +102,9 @@ Chain ID `5042002`. All three contracts are source-verified — the logic below 
 
 | Contract | Address |
 |---|---|
-| `AgentRegistry` | [`0x3A1F744d7F5B1F6E462727A8897CC88E273F730a`](https://testnet.arcscan.app/address/0x3A1F744d7F5B1F6E462727A8897CC88E273F730a) |
-| `ConversionRegistry` | [`0xbdb4e36DFb61A446Ec6900351b1A47754e389432`](https://testnet.arcscan.app/address/0xbdb4e36DFb61A446Ec6900351b1A47754e389432) |
-| `CampaignEscrow` | [`0x194aCFf27b8fbe332dab5ffba8d5318708d74520`](https://testnet.arcscan.app/address/0x194aCFf27b8fbe332dab5ffba8d5318708d74520) |
+| `AgentRegistry` | [`0xB76d859523f14D8cf66304086c727EE08bc5d449`](https://testnet.arcscan.app/address/0xB76d859523f14D8cf66304086c727EE08bc5d449) |
+| `ConversionRegistry` | [`0x0Df89eAAa1abae9AE01558B7149604857e29B4Ca`](https://testnet.arcscan.app/address/0x0Df89eAAa1abae9AE01558B7149604857e29B4Ca) |
+| `CampaignEscrow` | [`0x1421cE35dD2Cb1Cc291eE1728B1AB091330acF2f`](https://testnet.arcscan.app/address/0x1421cE35dD2Cb1Cc291eE1728B1AB091330acF2f) |
 
 ## Running it
 
@@ -138,8 +138,8 @@ The dashboard reads live chain state for the campaign named in `demo.config.json
 One setting matters. The dashboard scans from the campaign's first block to the chain head, which is right during a live run and wrong for a finished one — the head keeps moving, so each request scans a widening stretch of empty blocks. Bound it when deploying a completed campaign:
 
 ```bash
-CAMPAIGN_FROM_BLOCK=53979589
-CAMPAIGN_TO_BLOCK=53980400
+CAMPAIGN_FROM_BLOCK=55148863
+CAMPAIGN_TO_BLOCK=55149663
 ```
 
 Full list of settings and their defaults: `dashboard/.env.example`.
@@ -153,20 +153,23 @@ cd contracts && forge test  # escrow accounting, dispute window, duplicate refus
 
 ## What a run proves
 
-A clean rehearsal on campaign `poc-demo-8` (Arc testnet, from block `53979589`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
+A clean rehearsal on campaign `poc-demo-12` (Arc testnet, blocks `55148863`–`55149663`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
 
 | | |
 |---|---|
 | Conversions settled and paid | 50 — one payment each, 50 distinct Gateway references |
 | Recognized in escrow | 5,000,000 atomic USDC, exactly equal to the sum of payments |
-| Median per-conversion payment | 952 ms, signed by the Circle wallet |
-| Fabricated claims refused on evidence | 9 |
-| Bot traffic refused on timing | 9 |
-| Duplicate claims refused by the contract | 16 reverted transactions |
+| Median per-conversion payment | 940 ms, signed by the Circle wallet |
+| Fabricated claims refused on evidence | 7 |
+| Bot traffic refused on timing | 7 |
+| Linked identities refused on the funding graph | 5 |
+| Duplicate claims refused by the contract | 17 reverted transactions |
 | Autonomous budget reallocations | 1 — away from the fraud agent, reason `QUALITY_DIVERGENCE` |
-| Paid to the fraud agent | 0 |
+| Paid to the fraud agent, across both its identities | 0 |
 
-Every refusal belongs to the fraud agent; no honest publisher claim was refused. The three deterministic checks each refused something in this run: the contract itself reverted the duplicates, evidence-hash validation caught the fabricated claims, and the timing rule caught conversions arriving 300 ms after their click — traffic no human generates.
+Every refusal belongs to the fraud agent; no honest publisher claim was refused. Each deterministic check refused something in this run: the contract itself reverted the duplicates, evidence-hash validation caught the fabricated claims, and the timing rule caught conversions arriving 300 ms after their click — traffic no human generates.
+
+The fourth class is the one the other three cannot see. The fraud agent registered a second publisher identity, funded that wallet from its own, and claimed its conversions from the fresh address. Those conversions are real signed events with human timing, so evidence and timing both pass; what refuses them is the funding graph, read from the same chain anyone else can read. Two identities paid for out of one wallet are one operator, and an operator referring itself is not a referral.
 
 Every number is chain state: the events, the verdicts, the refusals, and the reallocation can be read back from the contracts above without trusting this file.
 

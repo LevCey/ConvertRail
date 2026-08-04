@@ -1,10 +1,10 @@
 {
   "chainId": 5042002,
   "network": "arc-testnet",
-  "deployedAt": "2026-07-15",
+  "deployedAt": "2026-08-03",
   "contracts": {
-    "AgentRegistry": "0x3A1F744d7F5B1F6E462727A8897CC88E273F730a",
-    "ConversionRegistry": "0xbdb4e36DFb61A446Ec6900351b1A47754e389432",
-    "CampaignEscrow": "0x194aCFf27b8fbe332dab5ffba8d5318708d74520"
+    "AgentRegistry": "0xB76d859523f14D8cf66304086c727EE08bc5d449",
+    "ConversionRegistry": "0x0Df89eAAa1abae9AE01558B7149604857e29B4Ca",
+    "CampaignEscrow": "0x1421cE35dD2Cb1Cc291eE1728B1AB091330acF2f"
   }
 }

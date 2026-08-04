@@ -141,9 +141,9 @@
   </div>
   <div class="proof">
     <div><div class="n">50</div><div class="l">conversions settled and paid, one payment each</div></div>
-    <div><div class="n">34</div><div class="l">fraud attempts refused on-chain</div></div>
+    <div><div class="n">36</div><div class="l">fraud attempts refused on-chain</div></div>
     <div><div class="n zero">0</div><div class="l">paid to the fraud agent</div></div>
-    <div><div class="n">952 ms</div><div class="l">median per-conversion payment</div></div>
+    <div><div class="n">940 ms</div><div class="l">median per-conversion payment</div></div>
   </div>
 </div></header>
 
@@ -177,7 +177,7 @@
   <ol class="steps">
     <li><div><b>Fund</b><span>An advertiser agent funds a USDC escrow and publishes the campaign rules on-chain: price per conversion, budget, per-publisher caps, and the verification policy everyone is judged by.</span></div></li>
     <li><div><b>Claim</b><span>Publisher agents submit conversion claims, each carrying a unique fingerprint and a hash of the signed conversion event.</span></div></li>
-    <li><div><b>Verify</b><span>Three deterministic checks gate every claim: duplicate detection, evidence-hash validation, and timing that has to look human.</span></div></li>
+    <li><div><b>Verify</b><span>Deterministic checks gate every claim: duplicate detection, evidence-hash validation, timing that has to look human, and a funding-graph test that tells an independent publisher from one operator wearing two identities.</span></div></li>
     <li><div><b>Pay</b><span>A verified conversion is paid on its own — instant, gas-free, full amount, no threshold — through Circle Nanopayments.</span></div></li>
     <li><div><b>Refuse</b><span>Fraudulent claims are refused by the contract itself, on-chain, and every attempt is recorded permanently with its evidence.</span></div></li>
     <li><div><b>Reallocate</b><span>The advertiser agent watches verified-conversion quality per publisher and shifts budget away from bad traffic on its own, with the reason code on-chain.</span></div></li>
@@ -187,8 +187,8 @@
 <section id="proof"><div class="wrap">
   <h2>What a run proves</h2>
   <p class="sub">
-    A clean rehearsal on Arc testnet (campaign <code>poc-demo-8</code>, from block 53979589) completed with
-    no restart, no recovery step, no manual payment and no operator intervention. Every number below is
+    A clean rehearsal on Arc testnet (campaign <code>poc-demo-12</code>, blocks 55148863–55149663) completed
+    with no restart, no recovery step, no manual payment and no operator intervention. Every number below is
     chain state — you can read it back from the deployed contracts, or watch it in the dashboard.
   </p>
   <div class="grid g2">
@@ -197,24 +197,26 @@
         <tr><td>Conversions settled and paid</td><td class="status ok">50</td></tr>
         <tr><td>Recognized in escrow</td><td class="status">5,000,000 atomic USDC</td></tr>
         <tr><td>Equal to the sum of payments</td><td class="status ok">to the atomic unit</td></tr>
-        <tr><td>Median per-conversion payment</td><td class="status">952 ms</td></tr>
+        <tr><td>Median per-conversion payment</td><td class="status">940 ms</td></tr>
       </table>
     </div>
     <div class="card">
       <table>
-        <tr><td>Fabricated claims refused on evidence</td><td class="status">9</td></tr>
-        <tr><td>Bot traffic refused on timing</td><td class="status">9</td></tr>
-        <tr><td>Duplicates reverted by the contract</td><td class="status">16</td></tr>
+        <tr><td>Fabricated claims refused on evidence</td><td class="status">7</td></tr>
+        <tr><td>Bot traffic refused on timing</td><td class="status">7</td></tr>
+        <tr><td>Linked identities refused on the funding graph</td><td class="status">5</td></tr>
+        <tr><td>Duplicates reverted by the contract</td><td class="status">17</td></tr>
         <tr><td>Autonomous reallocations</td><td class="status">1</td></tr>
-        <tr><td>Paid to the fraud agent</td><td class="status ok">0</td></tr>
+        <tr><td>Paid to the fraud agent, both identities</td><td class="status ok">0</td></tr>
       </table>
     </div>
   </div>
   <p class="note">
-    Every refusal belongs to the fraud agent; no honest publisher claim was refused. Each of the three
-    deterministic checks refused something in that run — the contract reverted the duplicates,
-    evidence-hash validation caught the fabricated claims, and the timing rule caught conversions
-    arriving 300 ms after their click, which is traffic no human generates.
+    Every refusal belongs to the fraud agent; no honest publisher claim was refused. The fourth class is the
+    one the others cannot see: the fraud agent registered a second publisher identity and funded it from its
+    own wallet, so its conversions are real signed events with human timing and only the funding graph gives
+    it away. Two identities paid for out of one wallet are one operator, and an operator referring itself is
+    not a referral.
     <a href="https://demo.convertrail.xyz">See it in the dashboard →</a>
   </p>
 </div></section>

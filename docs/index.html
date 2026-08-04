@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ConvertRail docs — architecture, verification, settlement</title>
-<meta name="description" content="How ConvertRail works: contracts, the claim lifecycle, the three deterministic checks, dispute-window auto-settle, Nanopayments settlement, and how to run it.">
+<meta name="description" content="How ConvertRail works: contracts, the claim lifecycle, the deterministic checks, dispute-window auto-settle, Nanopayments settlement, and how to run it.">
 <link rel="icon" href="/mark.png">
 <style>
   :root{
@@ -139,21 +139,23 @@
 
 <h2 id="verification">Verification rules</h2>
 <p>
-  Three deterministic checks, applied in order. The verifier's configuration is hashed and committed
+  Deterministic checks, applied in order. The verifier's configuration is hashed and committed
   on-chain when the campaign is created, so the rules a claim is judged by are public before it is made.
 </p>
 <table>
   <tr><th>Check</th><th>What it catches</th><th>Reason code</th></tr>
   <tr><td>Duplicate nullifier</td><td>A conversion someone already claimed. Enforced by the contract, so the attempt is a reverted transaction on Arc.</td><td class="mono">(revert)</td></tr>
   <tr><td>Evidence hash</td><td>A claim whose evidence matches no signed conversion event, points at another publisher's event, or belongs to another campaign.</td><td class="mono">EVIDENCE_MISMATCH</td></tr>
+  <tr><td>Funding graph</td><td>A publisher that is not an independent party — a second identity funded out of another participant's wallet. Its conversions are genuine and its timing is human, so no other check can see it.</td><td class="mono">LINKED_PUBLISHER</td></tr>
   <tr><td>Timing</td><td>Conversions arriving impossibly soon after the click — bot traffic that no human generates.</td><td class="mono">TIMING_ANOMALY</td></tr>
   <tr><td>Rate</td><td>Bursts beyond the configured per-publisher rate inside the window.</td><td class="mono">RATE_ANOMALY</td></tr>
   <tr><td>Malformed</td><td>A conversion timestamped before its own click.</td><td class="mono">MALFORMED_EVIDENCE</td></tr>
 </table>
 <p>
-  The decision core is a pure function of <code>(claim, event, binding, policy, prior claims)</code>:
-  identical inputs always produce identical verdicts, which is what makes a refusal auditable after
-  the fact.
+  The decision core is a pure function of <code>(claim, event, binding, policy, prior claims, funding
+  link)</code>: identical inputs always produce identical verdicts, which is what makes a refusal
+  auditable after the fact. Resolving the funding link means reading the chain, so that work happens in
+  the adapter and its result is passed in — the core itself performs no I/O.
 </p>
 
 <h2 id="dispute">Dispute window and auto-settle</h2>
@@ -194,7 +196,7 @@
   <tr><td>Circle developer-controlled wallet</td><td class="mono">952 ms</td></tr>
   <tr><td>Local key</td><td class="mono">524 ms</td></tr>
 </table>
-<p>Both are instant beside the net-30 terms this replaces; <code>CIRCLE_WALLET_ID</code> selects between them without a code change.</p>
+<p>Both are instant beside the net-30 terms this replaces; <code>CIRCLE_WALLET_ID</code> selects between them without a code change. These two figures come from one paired session, measured back to back so the comparison holds; the reference run's own Circle-signed median is 940&nbsp;ms.</p>
 
 <h2 id="reallocation">Autonomous reallocation</h2>
 <p>
@@ -235,9 +237,9 @@ cd contracts &amp;&amp; forge test  # escrow accounting, dispute window, duplica
 <p>Arc testnet, chain id <code>5042002</code>. All three contracts are source-verified, so the logic can be read on-chain rather than taken on faith.</p>
 <table>
   <tr><th>Contract</th><th class="mono">Address</th></tr>
-  <tr><td>AgentRegistry</td><td class="mono"><a href="https://testnet.arcscan.app/address/0x3A1F744d7F5B1F6E462727A8897CC88E273F730a">0x3A1F744d7F5B1F6E462727A8897CC88E273F730a</a></td></tr>
-  <tr><td>ConversionRegistry</td><td class="mono"><a href="https://testnet.arcscan.app/address/0xbdb4e36DFb61A446Ec6900351b1A47754e389432">0xbdb4e36DFb61A446Ec6900351b1A47754e389432</a></td></tr>
-  <tr><td>CampaignEscrow</td><td class="mono"><a href="https://testnet.arcscan.app/address/0x194aCFf27b8fbe332dab5ffba8d5318708d74520">0x194aCFf27b8fbe332dab5ffba8d5318708d74520</a></td></tr>
+  <tr><td>AgentRegistry</td><td class="mono"><a href="https://testnet.arcscan.app/address/0xB76d859523f14D8cf66304086c727EE08bc5d449">0xB76d859523f14D8cf66304086c727EE08bc5d449</a></td></tr>
+  <tr><td>ConversionRegistry</td><td class="mono"><a href="https://testnet.arcscan.app/address/0x0Df89eAAa1abae9AE01558B7149604857e29B4Ca">0x0Df89eAAa1abae9AE01558B7149604857e29B4Ca</a></td></tr>
+  <tr><td>CampaignEscrow</td><td class="mono"><a href="https://testnet.arcscan.app/address/0x1421cE35dD2Cb1Cc291eE1728B1AB091330acF2f">0x1421cE35dD2Cb1Cc291eE1728B1AB091330acF2f</a></td></tr>
 </table>
 
 <h2 id="limits">Limits and roadmap</h2>

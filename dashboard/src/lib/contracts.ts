@@ -30,9 +30,9 @@ export const USDC_ADDRESS = "0x3600000000000000000000000000000000000000" as Addr
 function deployedAddresses(): { agentRegistry: Address; conversionRegistry: Address; campaignEscrow: Address } {
   // Prefer the committed deployment record; fall back to the known addresses.
   const fallback = {
-    agentRegistry: "0x3A1F744d7F5B1F6E462727A8897CC88E273F730a" as Address,
-    conversionRegistry: "0xbdb4e36DFb61A446Ec6900351b1A47754e389432" as Address,
-    campaignEscrow: "0x194aCFf27b8fbe332dab5ffba8d5318708d74520" as Address,
+    agentRegistry: "0xB76d859523f14D8cf66304086c727EE08bc5d449" as Address,
+    conversionRegistry: "0x0Df89eAAa1abae9AE01558B7149604857e29B4Ca" as Address,
+    campaignEscrow: "0x1421cE35dD2Cb1Cc291eE1728B1AB091330acF2f" as Address,
   };
   try {
     const path = resolve(process.cwd(), "..", "contracts", "deployments", "arc-testnet.json");
@@ -49,7 +49,9 @@ function deployedAddresses(): { agentRegistry: Address; conversionRegistry: Addr
 
 export const ADDRESSES = deployedAddresses();
 
-/** Which campaign to display: CAMPAIGN_NAME env, else demo.config.json, else the last demo run. */
+/** Which campaign to display: CAMPAIGN_NAME env, else campaign.name from
+ * demo.config.json, else the reference run compiled in here for the case where
+ * that file is not readable (a deployed build without the repo beside it). */
 export function campaignName(): string {
   if (process.env.CAMPAIGN_NAME) return process.env.CAMPAIGN_NAME;
   try {
@@ -57,7 +59,7 @@ export function campaignName(): string {
     const cfg = JSON.parse(readFileSync(path, "utf8")) as { campaign: { name: string } };
     return cfg.campaign.name;
   } catch {
-    return "poc-demo-4";
+    return "poc-demo-12";
   }
 }
 
