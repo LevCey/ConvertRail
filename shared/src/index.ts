@@ -20,6 +20,7 @@ export {
   chainEnvFromProcess,
   arcChain,
   publicClient,
+  transportStats,
   walletClient,
   type ChainEnv,
 } from "./chain.ts";
@@ -34,3 +35,4 @@ export {
   type WalletEntry,
   type VerificationPolicy,
 } from "./demo.ts";
+export { evaluateRunHealth, type ClaimEvent, type RunHealth } from "./runhealth.ts";

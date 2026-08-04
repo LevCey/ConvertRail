@@ -1,6 +1,6 @@
 {
   "campaign": {
-    "name": "poc-demo-8",
+    "name": "poc-demo-12",
     "pricePerConversion": "100000",
     "budget": "10000000",
     "disputeWindowBlocks": 8,
@@ -31,14 +31,14 @@
     "sybil": {
       "id": "pub-y",
       "eventIntervalMs": 11000,
-      "fundingWei": "100000000000000000"
+      "fundingWei": "400000000000000000"
     }
   },
   "verification": {
     "minClickToConversionMs": 1500,
     "maxClaimsPerWindow": 30,
     "rateWindowMs": 60000,
-    "maxFundingLinkHops": 2,
+    "maxFundingLinkHops": 1,
     "fundingHubMinDegree": 3,
     "fundingScanDepthBlocks": 0
   },

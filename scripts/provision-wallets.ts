@@ -47,11 +47,17 @@ const MIN_NATIVE = parseEther("0.02"); // gas floor for the final assertion (nat
 const NATIVE_TARGET: Record<WalletName, bigint> = {
   advertiser: parseEther("0.05"),
   operational: parseEther("0.50"),
-  verifier: parseEther("1.00"),
+  verifier: parseEther("2.50"),
   merchant: 0n,
-  "pub-a": parseEther("0.50"),
-  "pub-b": parseEther("0.40"),
-  "pub-x": parseEther("0.45"), // also funds pub-y mid-run, out of this balance
+  // Sized from measured burn, not from a guess. A publisher submits a claim per
+  // merchant event and keeps submitting while the verifier works through its
+  // queue, so gas is consumed at the *event* rate for the whole run — not at
+  // the settlement rate. poc-demo-14 died with both publishers dry after 133
+  // and 106 claims against floors of 0.50 and 0.40; at ~0.004 per claim a
+  // 20-minute run needs roughly four times that.
+  "pub-a": parseEther("2.50"),
+  "pub-b": parseEther("2.00"),
+  "pub-x": parseEther("1.50"), // also funds pub-y mid-run, out of this balance
   "pub-y": 0n,
 };
 const ADVERTISER_TARGET_USDC = BigInt(config.campaign.budget) + parseUnits("1", 6);
@@ -113,8 +119,12 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
       await new Promise((r) => setTimeout(r, 1_500)); // pacing between txs
       return result;
     } catch (err) {
-      const msg = (err as Error).message ?? "";
-      const throttled = msg.includes("request limit") || msg.includes("-32011") || msg.includes("429");
+      // Same marker set the shared transport uses: this RPC has more than one
+      // throttle message, and matching only the first turns a throttle into a
+      // failed provisioning run.
+      const msg = ((err as Error).message ?? "").toLowerCase();
+      const throttled = ["request limit", "exceeds defined limit", "too many requests", "429", "-32011"]
+        .some((marker) => msg.includes(marker));
       if (!throttled || attempt >= MAX) throw err;
       const delay = 3_000 * attempt;
       console.log(`  ${label}: rate-limited, retrying in ${delay / 1000}s (${attempt}/${MAX})...`);

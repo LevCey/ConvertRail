@@ -3,7 +3,7 @@
 // (non-zero exit, named check) if any target is missed within the deadline.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import type { Address } from "viem";
+import { parseAbiItem, type Address } from "viem";
 import {
   campaignEscrowAbi,
   campaignIdFromName,
@@ -13,6 +13,8 @@ import {
   loadWallets,
   publicClient,
   REJECT_REASON,
+  evaluateRunHealth,
+  type ClaimEvent,
 } from "@convertrail/shared";
 
 const TARGET_SETTLED = Number(process.env.E2E_TARGET_SETTLED ?? 20);
@@ -23,6 +25,8 @@ const wallets = loadWallets();
 const env = chainEnvFromProcess();
 const pub = publicClient(env);
 const campaignId = campaignIdFromName(config.campaign.name);
+const NATIVE_TRANSFER_EMITTER = "0xfffffffffffffffffffffffffffffffffffffffe" as Address;
+const transferEvent = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 // Both identities the fraud agent operates. The second one exists precisely to
 // look like someone else, so the "nothing was paid to the attacker" gate has to
 // cover it — otherwise the one attack designed to evade attribution would also
@@ -33,22 +37,88 @@ const fraudAddresses = new Set(
   ),
 );
 
+// Atomic single-run lock. Two harnesses racing for the same merchant port and
+// campaign produce a run whose numbers look real and are not — the failure that
+// invalidated poc-demo-13. `wx` makes the check and the claim one operation, so
+// two simultaneous starts cannot both win. The lock lives outside `.e2e/`
+// because that directory is wiped a few lines below.
+const LOCK_PATH = ".e2e.lock";
+function claimRunLock(): void {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(LOCK_PATH, `${process.pid}\n`, { flag: "wx" });
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      const holder = Number(readFileSync(LOCK_PATH, "utf8").trim());
+      let alive = false;
+      try {
+        process.kill(holder, 0); // signal 0 tests for existence only
+        alive = true;
+      } catch {
+        alive = false;
+      }
+      if (alive) {
+        console.error(
+          `[e2e] FAILED: another run is already in progress (pid ${holder}). ` +
+            `Concurrent runs share the merchant port and campaign and cannot both be valid.`,
+        );
+        process.exit(1);
+      }
+      console.error(`[e2e] clearing stale lock from dead pid ${holder}`);
+      rmSync(LOCK_PATH, { force: true });
+    }
+  }
+  console.error("[e2e] FAILED: could not claim the run lock");
+  process.exit(1);
+}
+claimRunLock();
+process.on("exit", () => rmSync(LOCK_PATH, { force: true }));
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    rmSync(LOCK_PATH, { force: true });
+    process.exit(1);
+  });
+}
+
 rmSync(".e2e", { recursive: true, force: true });
 mkdirSync(".e2e", { recursive: true });
 
 const children: ChildProcess[] = [];
-function run(name: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}): ChildProcess {
+let stopping = false;
+
+/**
+ * @param critical a component the run is meaningless without. Its death is
+ *   fatal, not a log line: a merchant source that cannot bind its port leaves
+ *   the publishers reading whatever else is on it, which is how a run once
+ *   completed against a stale process and produced numbers that looked real.
+ *   Logging and continuing is not an option — a contaminated run that reports
+ *   PASSED is worse than no run.
+ */
+function run(
+  name: string,
+  args: string[],
+  extraEnv: NodeJS.ProcessEnv = {},
+  critical = false,
+): ChildProcess {
   const child = spawn("node", args, { env: { ...process.env, ...extraEnv } });
   child.stdout?.on("data", (d: Buffer) => process.stdout.write(`[${name}] ${d}`));
   child.stderr?.on("data", (d: Buffer) => process.stderr.write(`[${name}!] ${d}`));
   child.on("exit", (code) => {
-    if (code !== null && code !== 0) console.error(`[e2e] ${name} exited with code ${code}`);
+    if (stopping || code === null || code === 0) return;
+    console.error(`[e2e] ${name} exited with code ${code}`);
+    if (critical) {
+      console.error(`[e2e] FAILED: ${name} is required for a valid run — aborting rather than measuring a contaminated one`);
+      shutdown();
+      process.exit(1);
+    }
   });
   children.push(child);
   return child;
 }
 
 function shutdown(): void {
+  stopping = true;
   for (const child of children) child.kill("SIGTERM");
 }
 
@@ -85,7 +155,7 @@ writeFileSync(
 );
 console.log(`[e2e] starting from block ${startBlock}, target ${TARGET_SETTLED} settled claims`);
 
-run("merchant", ["merchant-sim/src/main.ts"]);
+run("merchant", ["merchant-sim/src/main.ts"], {}, true);
 // Insist the merchant source on that port is *this* run's. A leftover process
 // from an earlier run answers happily and serves another campaign's events,
 // which produces a full run of claims refused for evidence that was never
@@ -103,7 +173,7 @@ await waitFor("merchant-sim serving this campaign", async () => {
   );
 }, 30_000);
 
-run("advertiser", ["agents/src/advertiser.ts"]);
+run("advertiser", ["agents/src/advertiser.ts"], {}, true);
 await waitFor("campaign on-chain", async () => {
   await pub.readContract({
     address: env.campaignEscrow,
@@ -114,10 +184,10 @@ await waitFor("campaign on-chain", async () => {
   return true;
 }, 120_000);
 
-run("verifier", ["verifier/src/main.ts"]);
+run("verifier", ["verifier/src/main.ts"], {}, true);
 const settlement = run("settlement", ["settlement/src/main.ts"], {
   SETTLEMENT_MAX_RECOGNIZED: String(TARGET_SETTLED),
-});
+}, true);
 run("pub-a", ["agents/src/publisher.ts", "pub-a"]);
 run("pub-b", ["agents/src/publisher.ts", "pub-b"]);
 run("fraud", ["agents/src/fraud.ts"]);
@@ -280,6 +350,12 @@ async function reconcileWithRetry(): Promise<string[]> {
   }
 }
 
+// Counted and reported separately from component failures. A throttle the
+// harness's own collector absorbs by re-reading the same block range is not
+// the same event as a component loop exhausting its retries, and reporting
+// them as one number would overstate how clean a run was.
+let harnessTransientErrors = 0;
+
 const started = Date.now();
 let summary: Summary = {
   settled: 0, rejected: 0, disputed: 0, fraudSettled: 0, reallocations: 0,
@@ -291,7 +367,8 @@ const ruleFired = (reason: number): boolean => (summary.rejectReasons[reason] ??
 while (Date.now() - started < DEADLINE_MS) {
   await new Promise((r) => setTimeout(r, 10_000));
   summary = await collect().catch((err) => {
-    console.error("[e2e] collect error:", (err as Error).message.split("\n")[0]);
+    harnessTransientErrors++;
+    console.error("[e2e] collect error (harness-transient, cursor retries):", (err as Error).message.split("\n")[0]);
     return summary;
   });
   console.log(
@@ -351,9 +428,120 @@ if (config.fraud.sybil && !ruleFired(REJECT_REASON.LINKED_PUBLISHER)) {
 if (summary.duplicateReverts < 1) failures.push("no on-chain duplicate revert");
 if (summary.reallocations < 1) failures.push("no autonomous reallocation");
 if (summary.fraudSettled > 0) failures.push(`fraud publisher got ${summary.fraudSettled} settlements`);
+// Emitter self-check. The funding graph is built from Transfer logs emitted by
+// a synthetic address rather than from full blocks, which is far cheaper and
+// excludes reverted transfers — but it rests on undocumented node behaviour.
+// One assertion per run keeps that dependency honest: the fraud agent's own
+// funding transaction must appear in those logs with matching parties and
+// value, or the evidence behind every LINKED_PUBLISHER refusal is unsound.
+if (config.fraud.sybil && existsSync(".e2e/fraud.jsonl")) {
+  const funding = readFileSync(".e2e/fraud.jsonl", "utf8").trim().split("\n").filter(Boolean)
+    .map((l) => JSON.parse(l) as { type: string; txHash?: `0x${string}` })
+    .find((r) => r.type === "sybil_funding");
+  if (!funding?.txHash) {
+    failures.push("emitter self-check: no sybil_funding transaction was recorded this run");
+  } else {
+    try {
+      const tx = await pub.getTransaction({ hash: funding.txHash });
+      const logs = await pub.getLogs({
+        address: NATIVE_TRANSFER_EMITTER,
+        event: transferEvent,
+        fromBlock: tx.blockNumber!,
+        toBlock: tx.blockNumber!,
+      });
+      const match = logs.find(
+        (l) =>
+          l.transactionHash === funding.txHash &&
+          l.args.from?.toLowerCase() === tx.from.toLowerCase() &&
+          l.args.to?.toLowerCase() === (tx.to ?? "").toLowerCase() &&
+          l.args.value === tx.value,
+      );
+      if (!match) {
+        failures.push(
+          `emitter self-check: ${funding.txHash} moved ${tx.value} from ${tx.from} to ${tx.to} ` +
+            `but no matching Transfer log was emitted by ${NATIVE_TRANSFER_EMITTER} — ` +
+            `the funding index would have missed it`,
+        );
+      }
+    } catch (err) {
+      failures.push(`emitter self-check failed to run: ${(err as Error).message.split("\n")[0]}`);
+    }
+  }
+}
+
+// No claim may carry two verdicts and no claim may be paid twice. The verdict
+// pipeline keeps several sends outstanding, so this is the specific corruption
+// that a resend-on-timeout policy would have introduced — asserted rather than
+// assumed absent.
+if (existsSync(".e2e/payments.jsonl")) {
+  const rows = readFileSync(".e2e/payments.jsonl", "utf8").trim().split("\n").filter(Boolean)
+    .map((l) => JSON.parse(l) as { claimId?: string | number; reference?: string });
+  const byClaim = new Map<string, number>();
+  const byRef = new Map<string, number>();
+  for (const r of rows) {
+    if (r.claimId !== undefined) byClaim.set(String(r.claimId), (byClaim.get(String(r.claimId)) ?? 0) + 1);
+    if (r.reference) byRef.set(r.reference, (byRef.get(r.reference) ?? 0) + 1);
+  }
+  const dupClaims = [...byClaim.entries()].filter(([, n]) => n > 1);
+  const dupRefs = [...byRef.entries()].filter(([, n]) => n > 1);
+  if (dupClaims.length > 0) failures.push(`duplicate payments for claims: ${dupClaims.map(([c, n]) => `${c}x${n}`).join(", ")}`);
+  if (dupRefs.length > 0) failures.push(`duplicate payment references: ${dupRefs.map(([r, n]) => `${r}x${n}`).join(", ")}`);
+}
+// One post-run scan rather than extra event queries on every collect cycle: the
+// duplicate check and the health evaluation need the same three event sets, and
+// the run is already competing for this RPC's request budget.
+let perf = "";
+try {
+  const head = await pub.getBlockNumber();
+  const evts = async (eventName: string) =>
+    (await pub.getContractEvents({
+      address: env.conversionRegistry, abi: conversionRegistryAbi, eventName,
+      fromBlock: startBlock, toBlock: head,
+    })).filter((l) => (l.args as { campaignId?: `0x${string}` }).campaignId === campaignId);
+  const [submitted, verified, rejected] = await Promise.all([
+    evts("ClaimSubmitted"), evts("ClaimVerified"), evts("ClaimRejected"),
+  ]);
+
+  const asEvents = (logs: typeof submitted): ClaimEvent[] =>
+    logs.map((l) => ({
+      claimId: String((l.args as { claimId?: bigint }).claimId),
+      block: Number(l.blockNumber),
+    }));
+  const verdictEvents = asEvents([...verified, ...rejected] as typeof submitted);
+
+  // Duplicate verdicts stay a correctness gate of their own. Run health
+  // deliberately does not look at them: folding the two together is what
+  // produced a throughput assertion no correct run could satisfy.
+  const counts = new Map<string, number>();
+  for (const v of verdictEvents) counts.set(v.claimId, (counts.get(v.claimId) ?? 0) + 1);
+  const dup = [...counts.entries()].filter(([, n]) => n > 1);
+  if (dup.length > 0) {
+    failures.push(`duplicate verdicts for claims: ${dup.map(([c, n]) => `${c}x${n}`).join(", ")}`);
+  }
+
+  const health = evaluateRunHealth(asEvents(submitted), verdictEvents);
+  failures.push(...health.failures);
+  perf =
+    `  arrival ${health.arrivalRate.toFixed(3)}/s | verdict ${health.verdictRate.toFixed(3)}/s | ` +
+    `completion ${(health.completionRatio * 100).toFixed(1)}%  [telemetry, not a gate]\n` +
+    `  backlog by quarter: ${health.backlogByQuarter.join(" -> ")}  (gate: Q4 <= Q3)\n` +
+    `  final backlog: ${health.finalBacklog}\n` +
+    (health.lag
+      ? `  verdict lag blocks: first ${health.lag.first} | median ${health.lag.median} | final ${health.lag.final}\n`
+      : "") +
+    `  claims submitted ${health.submitted} | verdicts ${health.verdicts} | span ${Math.round(health.spanSeconds)}s`;
+} catch (err) {
+  failures.push(`post-run health scan failed: ${(err as Error).message.split("\n")[0]}`);
+}
+
 failures.push(...(await reconcileWithRetry()));
 
 console.log("\n[e2e] final:", JSON.stringify(summary));
+console.log(`[e2e] harness-transient errors (collector throttles, cursor-recovered): ${harnessTransientErrors}`);
+if (perf) console.log("[e2e] throughput:\n" + perf);
+if (existsSync(".e2e/verifier-stats.json")) {
+  console.log("[e2e] verdict pipeline: " + readFileSync(".e2e/verifier-stats.json", "utf8").trim().replace(/\s+/g, " "));
+}
 if (failures.length > 0) {
   console.error("[e2e] FAILED:\n" + failures.map((f) => `  - ${f}`).join("\n"));
   process.exit(1);

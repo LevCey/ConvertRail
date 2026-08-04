@@ -9,6 +9,7 @@ node_modules/
 
 # runtime logs
 .e2e/
+.e2e.lock
 
 # build output
 dist/
