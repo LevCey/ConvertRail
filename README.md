@@ -139,7 +139,7 @@ One setting matters. The dashboard scans from the campaign's first block to the 
 
 ```bash
 CAMPAIGN_FROM_BLOCK=55148863
-CAMPAIGN_TO_BLOCK=55149663
+CAMPAIGN_TO_BLOCK=55149673
 ```
 
 Full list of settings and their defaults: `dashboard/.env.example`.
@@ -153,7 +153,7 @@ cd contracts && forge test  # escrow accounting, dispute window, duplicate refus
 
 ## What a run proves
 
-A clean rehearsal on campaign `poc-demo-12` (Arc testnet, blocks `55148863`–`55149663`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
+A clean rehearsal on campaign `poc-demo-12` (Arc testnet, blocks `55148863`–`55149673`) completed with no restart, no recovery step, no manual payment, and no operator intervention:
 
 | | |
 |---|---|

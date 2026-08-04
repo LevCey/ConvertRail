@@ -15,6 +15,7 @@ import {
   type SubmittedEventArgs,
 } from "./contracts";
 import { loadRunMetadata, loadRuntimeEvidence, type DuplicateAttemptRecord } from "./runtime";
+import { serializeByKey } from "./serialize";
 
 const DEFAULT_LOOKBACK = 300_000n;
 
@@ -142,7 +143,13 @@ async function scanRange(campaignId: Hex, fromBlock: bigint, toBlock: bigint): P
   return acc;
 }
 
-async function refresh(campaignId: Hex, current: bigint): Promise<CampaignCache> {
+// Serialised per campaign: two concurrent requests must not both scan the
+// same block range and append it twice. See serialize.ts for why.
+function refresh(campaignId: Hex, current: bigint): Promise<CampaignCache> {
+  return serializeByKey(campaignId, () => refreshOnce(campaignId, current));
+}
+
+async function refreshOnce(campaignId: Hex, current: bigint): Promise<CampaignCache> {
   let entry = cache.get(campaignId);
 
   if (!entry) {

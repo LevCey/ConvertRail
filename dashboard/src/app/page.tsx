@@ -119,11 +119,20 @@ export default function Home() {
         first.current = false;
       }
     };
-    poll();
-    const id = setInterval(poll, 4000);
+    // Scheduled after each poll completes, never on a fixed interval. A cold
+    // scan takes seconds while the interval was four, so requests overlapped —
+    // and overlapping requests were what let the server append the same block
+    // range twice. The server now serialises regardless; this keeps the client
+    // from queueing work it cannot use.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const loop = async () => {
+      await poll();
+      if (alive) timer = setTimeout(loop, 4000);
+    };
+    void loop();
     return () => {
       alive = false;
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
