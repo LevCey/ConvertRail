@@ -39,7 +39,7 @@ Minimum payout thresholds exist because settlement is expensive. A $0.50 convers
 ## Architecture
 
 ```
-                   ┌──────────────────────────────────────────────────────┐
+                   ┌────────────────────────────────────────────────────────┐
   Arc testnet      │  AgentRegistry     roles: advertiser/publisher/verifier│
   (USDC = gas)     │  CampaignEscrow    budget, rules, caps, dispute window,│
                    │                    reallocation, refusal path          │
@@ -47,9 +47,9 @@ Minimum payout thresholds exist because settlement is expensive. A $0.50 convers
                    │                    verdicts, evidence hashes           │
                    └────▲─────────▲──────────▲──────────▲───────────────────┘
                         │         │          │          │
-                  fund +│   claims│    claims│   verdicts│ reallocate
+                  fund +│   claims│    claims│  verdicts│ reallocate
                   rules │         │          │          │
-   ┌────────────────────┴─┐ ┌─────┴────┐ ┌───┴─────┐ ┌──┴──────────────────┐
+   ┌────────────────────┴─┐ ┌─────┴────┐ ┌───┴─────┐ ┌──┴───────────────────┐
    │ advertiser agent     │ │ publisher│ │ fraud   │ │ verifier service     │
    │ fund · monitor ·     │ │ agents   │ │ agent   │ │ deterministic checks │
    │ reallocate           │ │ ×2       │ │ (demo   │ │ posts verdicts       │
@@ -65,12 +65,14 @@ Minimum payout thresholds exist because settlement is expensive. A $0.50 convers
 | Component | Role |
 |---|---|
 | `contracts/` | CampaignEscrow, ConversionRegistry, AgentRegistry (Solidity, Arc) |
+| `shared/` | Canonical JSON, evidence hashing, contract ABIs, Arc chain client — the one place every service agrees on how a claim is serialized and hashed |
 | `agents/` | Advertiser, publishers, fraud agent — deterministic policies (TypeScript) |
 | `verifier/` | Deterministic verification service; posts on-chain verdicts; holds no funds |
 | `merchant-sim/` | Simulated conversion source emitting signed events (demo stand-in for an advertiser's conversion system) |
 | `settlement/` | Nanopayments integration and escrow reconciliation |
 | `dashboard/` | Live settlement feed, campaign state, fraud log (Next.js) |
 | `scripts/` | Wallet provisioning, demo orchestrator, end-to-end acceptance harness |
+| `landing/` · `docs/` | The published site and documentation |
 
 ## Verification model, honestly
 
@@ -121,6 +123,14 @@ npm run demo              # drive the full adversarial loop against Arc testnet
 
 `npm run demo` starts every component — merchant source, publisher agents, fraud agent, verifier, settlement, advertiser agent — and drives the loop to at least 50 on-chain settlements. It is an acceptance gate, not a screensaver: it exits non-zero unless the settlements land, every recognized payout has a matching payment, at least one claim is rejected, at least one duplicate is reverted on-chain, the advertiser agent reallocates budget autonomously, the fraud agent is paid nothing, and escrow accounting reconciles against the payment stream.
 
+### Checks
+
+```bash
+npm test                    # every pure module: hashing, verifier rules, reallocation, parsers, conversion source
+npm run typecheck           # tsc --noEmit; the test runner strips types, it does not check them
+cd contracts && forge test  # escrow accounting, dispute window, duplicate refusal, invariants
+```
+
 One operational note: conversion ids are deterministic and nullifiers are consumed on submission, so each run needs an unused `campaign.name` in `demo.config.json`.
 
 Watch it live:
@@ -143,13 +153,6 @@ CAMPAIGN_TO_BLOCK=55149673
 ```
 
 Full list of settings and their defaults: `dashboard/.env.example`.
-
-Tests:
-
-```bash
-npm test                    # canonical hashing, verifier rules, reallocation policy, dashboard parsers
-cd contracts && forge test  # escrow accounting, dispute window, duplicate refusal, invariants
-```
 
 ## What a run proves
 
@@ -175,7 +178,7 @@ Every number is chain state: the events, the verdicts, the refusals, and the rea
 
 ## Status
 
-Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), Agentic Economy track. The full loop described here runs end to end on Arc testnet today, and the [dashboard](https://demo.convertrail.xyz) is deployed with the reference run in it. What remains is the demo video, not missing machinery.
+Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), Agentic Economy track. Everything described above runs end to end on Arc testnet today: the contracts are deployed and source-verified, the [dashboard](https://demo.convertrail.xyz) is live with the reference run in it, and `npm run demo` reproduces the loop against the chain rather than describing it.
 
 ## Roadmap
 
@@ -183,6 +186,10 @@ Built for the **Programmable Money Hackathon** (Encode Club × Circle × Arc), A
 - **Confidential referee** — verification inside confidential compute, so neither side reveals raw campaign data to the other.
 - **Cross-chain payouts** — CCTP for publishers who want settlement on other chains, StableFX for non-USD payout currencies.
 - **Dispute resolution** — the MVP records disputes with their evidence on-chain; structured resolution comes after.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ## Team
 
