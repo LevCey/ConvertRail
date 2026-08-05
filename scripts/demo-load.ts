@@ -11,7 +11,7 @@
 // conversionIds are deterministic, so each run needs an unused campaign name
 // (nullifiers are consumed at submit). Watch it live at the dashboard (:4700).
 //
-//   The five beats (Strategy §6), all real on-chain state:
+//   The five beats, all real on-chain state:
 //     setup    — advertiser agent funds escrow + publishes rules
 //     flow     — publisher agents earn instant per-conversion USDC payouts
 //     attack   — fraud agent is refused on-chain (revert + REJECTED verdict)
