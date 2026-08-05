@@ -11,6 +11,10 @@ node_modules/
 .e2e/
 .e2e.lock
 
+# suppression journal and receipts — deliberately not under .e2e/, which the
+# harness wipes between runs
+.suppression/
+
 # build output
 dist/
 out/

@@ -11,6 +11,7 @@ import {
   loadWallets,
   type SignedConversionEvent,
 } from "@convertrail/shared";
+import { PRIVACY_HEADERS, handleSuppressionSubject } from "./suppression-endpoint.ts";
 
 const config = loadDemoConfig();
 const wallets = loadWallets();
@@ -83,6 +84,13 @@ if (sybil) {
   setInterval(() => void emitEvent(sybil.id), sybil.eventIntervalMs);
 }
 
+// Buyer identities are released only to a caller holding this token, and only
+// one claim at a time. Absent configuration the endpoint refuses to serve at
+// all: an identity endpoint that falls open when a variable is missing is worse
+// than one that does not exist.
+const suppressionToken = process.env.SUPPRESSION_SERVICE_TOKEN ?? "";
+const ENVELOPE_TTL_MS = 5 * 60_000;
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   res.setHeader("Content-Type", "application/json");
@@ -115,6 +123,40 @@ const server = createServer((req, res) => {
       return;
     }
     res.end(JSON.stringify({ event }));
+    return;
+  }
+
+  // Buyer identity for one verified claim, keyed by the same evidence hash the
+  // chain already commits to. Deliberately not part of /events: the publisher
+  // feed is read by every agent in the demo, and an identity that appears there
+  // is an identity everyone has.
+  const subjectMatch = url.pathname.match(/^\/suppression-subject\/(0x[0-9a-fA-F]{64})$/);
+  if (subjectMatch) {
+    const hash = subjectMatch[1] as `0x${string}`;
+    // Set before the handler is entered, so no outcome — including a rejected
+    // promise — can produce a response that a cache is free to store or to
+    // serve to a caller presenting different credentials.
+    for (const [name, value] of Object.entries(PRIVACY_HEADERS)) res.setHeader(name, value);
+    void handleSuppressionSubject(
+      hash,
+      req.headers.authorization,
+      (h) => {
+        const event = byHash.get(h);
+        return event && { conversionId: event.conversionId, conversionTs: event.conversionTs };
+      },
+      merchant,
+      { token: suppressionToken, ttlMs: ENVELOPE_TTL_MS, now: Date.now },
+    ).then(
+      ({ status, body, headers }) => {
+        res.statusCode = status;
+        for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+        res.end(JSON.stringify(body));
+      },
+      () => {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: "could not build envelope" }));
+      },
+    );
     return;
   }
 

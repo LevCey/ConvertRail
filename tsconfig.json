@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    "strict": true,
+    // Distinguishes an absent property from one explicitly set to `undefined`.
+    // Not pedantry here: `canonicalJSON` throws on an `undefined` value, so
+    // `{ failure: maybeUndefined }` fails at persist time while an absent key
+    // serialises fine. This flag catches that class before the store does.
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // Off deliberately. Its remaining hits are index reads in test files where
+    // the adjacent assertion is the guard, and turning it on would require
+    // edits inside already-shipped `shared/` code for no correctness gain.
+    // Revisit if this module ever grows index-heavy production logic.
+    "noUncheckedIndexedAccess": false,
+
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Third-party declarations only; suppresses nothing in this repository.
+    // viem's `ox` dependency declares WebAuthn and `CryptoKey` types that need
+    // the DOM lib, which a Node service has no business pulling in.
+    "skipLibCheck": true
+  },
+  "include": ["shared/src", "suppression/src", "merchant-sim/src"]
+}

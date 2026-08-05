@@ -6,12 +6,14 @@
     "shared"
   ],
   "scripts": {
-    "test": "node --test shared/src/*.test.ts verifier/src/*.test.ts agents/src/*.test.ts dashboard/src/lib/*.test.ts",
+    "test": "node --test shared/src/*.test.ts verifier/src/*.test.ts agents/src/*.test.ts dashboard/src/lib/*.test.ts merchant-sim/src/*.test.ts suppression/src/*.test.ts suppression/src/adapters/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "provision": "node --env-file-if-exists=../.env --env-file=.env scripts/provision-wallets.ts",
     "merchant-sim": "node --env-file-if-exists=../.env --env-file=.env merchant-sim/src/main.ts",
     "verifier": "node --env-file-if-exists=../.env --env-file=.env verifier/src/main.ts",
     "settlement": "node --env-file-if-exists=../.env --env-file=.env settlement/src/main.ts",
     "advertiser": "node --env-file-if-exists=../.env --env-file=.env agents/src/advertiser.ts",
+    "suppression": "node --env-file-if-exists=../.env --env-file=.env suppression/src/agent.ts",
     "e2e": "node --env-file-if-exists=../.env --env-file=.env scripts/e2e.ts",
     "demo": "node --env-file-if-exists=../.env --env-file=.env scripts/demo-load.ts"
   },
@@ -23,5 +25,9 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3"
   }
 }
