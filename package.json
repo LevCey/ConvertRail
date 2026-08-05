@@ -14,6 +14,8 @@
     "settlement": "node --env-file-if-exists=../.env --env-file=.env settlement/src/main.ts",
     "advertiser": "node --env-file-if-exists=../.env --env-file=.env agents/src/advertiser.ts",
     "suppression": "node --env-file-if-exists=../.env --env-file=.env suppression/src/agent.ts",
+    "suppression:demo": "node scripts/suppression-demo.ts",
+    "suppression:verify": "node scripts/verify-suppression-receipt.ts",
     "e2e": "node --env-file-if-exists=../.env --env-file=.env scripts/e2e.ts",
     "demo": "node --env-file-if-exists=../.env --env-file=.env scripts/demo-load.ts"
   },
