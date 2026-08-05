@@ -6,7 +6,7 @@
 
 A neutral settlement rail for performance marketing, built on [Arc](https://www.arc.io/). Every conversion claim is checked by deterministic rules, fraud is refused on-chain in real time, and verified conversions are paid to publishers instantly in USDC — full amount, per conversion, no payout thresholds. From net-30 to one second.
 
-**[convertrail.xyz](https://convertrail.xyz)** · **[live dashboard](https://demo.convertrail.xyz)** — the reference run, every row re-derived from Arc · **[docs](https://docs.convertrail.xyz)**
+**[convertrail.xyz](https://convertrail.xyz)** · **[live dashboard](https://demo.convertrail.xyz)** — the reference run, every row checked against Arc · **[docs](https://docs.convertrail.xyz)**
 
 ## The problem
 
@@ -27,7 +27,7 @@ The full adversarial loop runs agent-to-agent, with no humans in the flow:
 3. A **deterministic verification layer** gates every claim: duplicate detection (each conversion carries a *nullifier* — a unique fingerprint the contract accepts only once), evidence-hash validation against the signed conversion event, timing-anomaly checks, and a funding-graph test that refuses a claimant which is not an independent party.
 4. A verified conversion is paid **instantly and gas-free, in full, per conversion** via Circle Nanopayments.
 5. A claim that passes verification **auto-settles unless the advertiser objects within a dispute window** — silence is acceptance, so the referee constrains both sides, not just publishers.
-6. A fraudulent claim is **refused by the contract itself, on-chain**, and the attempt is permanently logged with its evidence.
+6. A duplicate claim is **refused by the contract itself** — the nullifier reverts the transaction. The other three classes are refused by an on-chain verdict from the verifier, which the registry records but does not re-derive. Either way the attempt is permanently logged with its reason.
 7. The advertiser agent monitors verified-conversion quality per publisher and **autonomously reallocates budget** away from low-quality traffic — decision logic tied to real on-chain signals, no human intervention.
 
 Every agent in the money path is deterministic by design. Agents that move money need auditable decision logic, not improvisation.
@@ -127,7 +127,8 @@ npm run demo              # drive the full adversarial loop against Arc testnet
 
 ```bash
 npm test                    # every pure module: hashing, verifier rules, reallocation, parsers, conversion source
-npm run typecheck           # tsc --noEmit; the test runner strips types, it does not check them
+npm run typecheck           # tsc --noEmit over shared, suppression and merchant-sim
+                            # (the test runner strips types, it does not check them)
 cd contracts && forge test  # escrow accounting, dispute window, duplicate refusal, invariants
 ```
 
@@ -162,7 +163,7 @@ A clean rehearsal on campaign `poc-demo-12` (Arc testnet, blocks `55148863`–`5
 |---|---|
 | Conversions settled and paid | 50 — one payment each, 50 distinct Gateway references |
 | Recognized in escrow | 5,000,000 atomic USDC, exactly equal to the sum of payments |
-| Median per-conversion payment | 940 ms, signed by the Circle wallet |
+| Median Gateway round trip per payment | 940 ms, signed by the Circle wallet — the payment leg only, not verification-to-payment |
 | Fabricated claims refused on evidence | 7 |
 | Bot traffic refused on timing | 7 |
 | Linked identities refused on the funding graph | 5 |
